@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { appConfig } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
 import { ChatRequest, AITutorResponse } from './types/index.js';
+import { Classifier } from './classifier/Classifier.js';
 import pino from 'pino';
 
 /**
@@ -29,6 +30,9 @@ export async function createServer(): Promise<FastifyInstance> {
   // Initialize DI container
   const container = createContainer(logger);
 
+  const classifier = new Classifier(logger);
+
+
   // Health check endpoints
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
@@ -36,8 +40,8 @@ export async function createServer(): Promise<FastifyInstance> {
 
   server.get('/ready', async () => {
     try {
-      // TODO: Check dependencies (Redis, AWS, etc.)
-      return { status: 'ready', services: { redis: 'ok', bedrock: 'ok' } };
+      // TODO: Check dependencies (AWS, etc.)
+      return { status: 'ready', services: { bedrock: 'ok' } };
     } catch (error) {
       server.log.error(error, 'Readiness check failed');
       const msg = error instanceof Error ? error.message : 'unknown';
@@ -76,6 +80,44 @@ export async function createServer(): Promise<FastifyInstance> {
       return { error: 'Internal server error', message: msg };
     }
   });
+
+  // Query classification endpoint
+server.post<{ Body: { query: string } }>('/classify', {
+  schema: {
+    body: {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: { type: 'string' }
+      }
+    }
+  }
+}, async (request, reply) => {
+  try {
+    const { query } = request.body;
+    const result = await classifier.classify(query);
+
+    server.log.info({ 
+      query, 
+      subject: result.subject, 
+      level: result.level, 
+      confidence: result.confidence 
+    }, '✓ Classification result');
+
+    reply.type('application/json');
+    return {
+      success: true,
+      query,
+      classification: result
+    };
+  } catch (error) {
+    server.log.error(error, 'Classification failed');
+    reply.status(500);
+    const msg = error instanceof Error ? error.message : 'unknown';
+    return { success: false, error: msg };
+  }
+});
+
 
   // Streaming chat endpoint using Server-Sent Events
   server.get<{ Querystring: { message: string; subject?: string; level?: string; userSubscription?: string } }>(
@@ -169,6 +211,6 @@ async function startServer() {
 }
 
 // Start server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url.endsWith('server.ts')) {
   startServer();
 }
