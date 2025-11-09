@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Query Classifier</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 2rem;
+        background-color: #f9f9f9;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #333;
+        text-align: center;
+      }
+      input,
+      button {
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 1rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        cursor: pointer;
+        border: none;
+        font-weight: bold;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      .result-section {
+        margin-top: 2rem;
+        display: none;
+      }
+      .result-section.visible {
+        display: block;
+      }
+      .result-box {
+        background: #f0f8ff;
+        border-left: 4px solid #007bff;
+        padding: 1.5rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .result-item {
+        margin: 1rem 0;
+        font-size: 1.1rem;
+      }
+      .label {
+        font-weight: bold;
+        color: #333;
+        display: inline-block;
+        width: 120px;
+      }
+      .value {
+        color: #007bff;
+        font-weight: bold;
+      }
+      .confidence-bar {
+        width: 100%;
+        height: 20px;
+        background: #e9ecef;
+        border-radius: 10px;
+        margin-top: 0.5rem;
+        overflow: hidden;
+      }
+      .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #ff6b6b, #ffa500, #51cf66);
+        transition: width 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 0.75rem;
+        font-weight: bold;
+      }
+      .error {
+        color: #dc3545;
+        background: #f8d7da;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .loading {
+        color: #666;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎓 Query Classifier</h1>
+      <form id="form">
+        <input id="query" placeholder="Enter your question..." required />
+        <button type="submit">Classify Query</button>
+      </form>
+
+      <div class="result-section" id="resultSection">
+        <h3>📊 Classification Result:</h3>
+        <div class="result-box">
+          <div class="result-item">
+            <span class="label">Query:</span>
+            <span class="value" id="queryDisplay"></span>
+          </div>
+          <div class="result-item">
+            <span class="label">Subject:</span>
+            <span class="value" id="subjectDisplay"></span>
+          </div>
+          <div class="result-item">
+            <span class="label">Level:</span>
+            <span class="value" id="levelDisplay"></span>
+          </div>
+          <div class="result-item">
+            <span class="label">Confidence:</span>
+            <span class="value" id="confidenceDisplay"></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="errorSection"></div>
+    </div>
+
+    <script>
+      const form = document.getElementById("form");
+      const resultSection = document.getElementById("resultSection");
+      const errorSection = document.getElementById("errorSection");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const query = document.getElementById("query").value;
+
+        // Show loading state
+        resultSection.classList.remove("visible");
+        errorSection.innerHTML = '<div class="loading">⏳ Classifying...</div>';
+
+        try {
+          const res = await fetch("http://localhost:3000/classify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query }),
+          });
+
+          const data = await res.json();
+
+          if (data.success && data.classification) {
+            const classification = data.classification;
+
+            // Populate the results
+            document.getElementById("queryDisplay").textContent = query;
+            document.getElementById("subjectDisplay").textContent =
+              classification.subject.toUpperCase();
+            document.getElementById("levelDisplay").textContent =
+              classification.level.charAt(0).toUpperCase() +
+              classification.level.slice(1);
+
+            const confidencePercent = (classification.confidence * 100).toFixed(
+              1
+            );
+            document.getElementById("confidenceDisplay").textContent =
+              confidencePercent + "%";
+
+            // Show results and hide errors
+            errorSection.innerHTML = "";
+            resultSection.classList.add("visible");
+          } else {
+            errorSection.innerHTML =
+              '<div class="error">❌ Error: ' +
+              (data.error || "Unknown error") +
+              "</div>";
+            resultSection.classList.remove("visible");
+          }
+        } catch (err) {
+          errorSection.innerHTML =
+            '<div class="error">❌ Error: ' + err.message + "</div>";
+          resultSection.classList.remove("visible");
+        }
+      });
+    </script>
+  </body>
+</html>

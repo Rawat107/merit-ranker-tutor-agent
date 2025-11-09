@@ -7,6 +7,7 @@ build/
 tmp/
 temp/
 coverage/
+.inferenceProfiles.json
 .nyc_output/
 logs/
 *.log
