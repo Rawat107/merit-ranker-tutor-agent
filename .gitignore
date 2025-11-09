@@ -1,0 +1,91 @@
+# =========================
+# Node.js / TypeScript
+# =========================
+node_modules/
+dist/
+build/
+tmp/
+temp/
+coverage/
+.nyc_output/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.local
+.env.*.local
+.env.test
+.env.development
+.env.production
+
+# =========================
+# Editor / OS specific
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# =========================
+# TypeScript
+# =========================
+*.tsbuildinfo
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+.docker/
+.dockerignore
+
+# =========================
+# AWS Amplify / CDK / Serverless
+# =========================
+.amplify/
+cdk.out/
+.serverless/
+*.template.json
+*.template.yaml
+
+# =========================
+# Testing / Reports
+# =========================
+coverage/
+reports/
+*.lcov
+
+# =========================
+# Local Cache / Misc
+# =========================
+.cache/
+.eslintcache
+.prettiercache
+.next/
+out/
+
+# =========================
+# Logs and lock files
+# =========================
+*.pid
+*.seed
+*.pid.lock
+*.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# =========================
+# Mac / Linux metadata
+# =========================
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
