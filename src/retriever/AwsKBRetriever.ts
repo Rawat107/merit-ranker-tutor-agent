@@ -9,7 +9,8 @@ export class AWSKnowledgeBaseRetriever {
     this.logger = logger;
 
     const kbId = process.env.KB_ID;
-    const region = process.env.AWS_REGION || 'ap-southeast-2';
+    //Region sydney
+    const region = 'ap-southeast-2';
 
     if (!kbId) {
       this.logger.error('Knowledge Base ID (KB_ID) is not set in environment variables.');
@@ -59,6 +60,7 @@ export class AWSKnowledgeBaseRetriever {
      try {
       const langchainDocs = await this.retriever.invoke(query);
 
+      // Check if documents are returned
       if(!langchainDocs || langchainDocs.length === 0){
         this.logger.warn('[kB Retriever] No documents found for the query');
         return [];
@@ -67,8 +69,9 @@ export class AWSKnowledgeBaseRetriever {
       //Transform langchain documents to our Document format
       // Transform LangChain Documents to our Document format
       const documents: Document[] = langchainDocs.map((doc, index) => ({
-        id: doc.metadata?.id || `kb-doc-${index}`,
-        text: doc.pageContent,
+        id: doc.metadata?.id || `kb-doc-${index}`, // Use metadata id or generate one
+        text: doc.pageContent, // Use full content from KB
+        // Add additional metadata if needed
         metadata: {
           source: 'knowledge-base',
           subject: options?.subject || 'unknown',
