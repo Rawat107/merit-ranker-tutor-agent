@@ -24,7 +24,7 @@ export const tutorConfigData: TutorConfig = {
   },
   "modelRegistry": {
     "gpt-3.5-turbo": { "bedrockId": "gpt-3.5-turbo", "invokeId": "gpt-3.5-turbo", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
+    "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.amazon.nova-micro-v1:0", "region": "ap-south-1" },
     "amazon.rerank-v1:0": { "bedrockId": "amazon.rerank-v1:0", "invokeId": "amazon.rerank-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
     "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
     "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": null, "region": "ap-south-1" },
