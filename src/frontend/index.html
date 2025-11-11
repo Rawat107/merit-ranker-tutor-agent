@@ -104,6 +104,19 @@
         background: #654a91;
       }
 
+      .btn-rerank {
+        background: #f093fb;
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        width: 100%;
+        margin-top: 15px;
+      }
+
+      .btn-rerank:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(245, 87, 108, 0.3);
+      }
+
       button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
@@ -218,6 +231,97 @@
         text-decoration: underline;
       }
 
+      /* Reranker Styles */
+      .rerank-section {
+        margin-top: 30px;
+        padding: 20px;
+        background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%);
+        border-radius: 8px;
+        border-left: 4px solid #f5576c;
+        display: none;
+      }
+
+      .rerank-section.active {
+        display: block;
+      }
+
+      .rerank-section h3 {
+        margin-bottom: 15px;
+        color: #f5576c;
+        font-size: 16px;
+      }
+
+      .rerank-results {
+        margin-top: 15px;
+      }
+
+      .rerank-item {
+        background: white;
+        border: 1px solid #e0e0e0;
+        padding: 15px;
+        margin-bottom: 12px;
+        border-radius: 6px;
+        transition: all 0.2s;
+      }
+
+      .rerank-item:hover {
+        box-shadow: 0 4px 12px rgba(245, 87, 108, 0.1);
+        transform: translateY(-2px);
+      }
+
+      .rerank-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .rerank-title {
+        font-weight: 600;
+        color: #333;
+        flex: 1;
+        font-size: 14px;
+      }
+
+      .score-comparison {
+        display: flex;
+        gap: 10px;
+        font-size: 12px;
+      }
+
+      .score-badge {
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-weight: 600;
+      }
+
+      .score-original {
+        background: #f0f0f0;
+        color: #666;
+      }
+
+      .score-reranked {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+      }
+
+      .rerank-reason {
+        color: #666;
+        font-size: 12px;
+        margin-top: 8px;
+        font-style: italic;
+        padding: 8px;
+        background: #f9f9f9;
+        border-radius: 4px;
+      }
+
+      .rerank-text {
+        color: #555;
+        font-size: 13px;
+        line-height: 1.5;
+        margin-top: 8px;
+      }
+
       .error {
         background: #fee;
         border: 1px solid #fcc;
@@ -236,7 +340,7 @@
   </head>
   <body>
     <div class="container">
-      <h1>AI Tutor</h1>
+      <h1>🎓 AI Tutor</h1>
 
       <form id="tutorForm">
         <div class="form-group">
@@ -264,18 +368,18 @@
 
         <div class="button-group">
           <button type="button" class="btn-classify" id="classifyBtn">
-            Classify
+            🔍 Classify
           </button>
-          <button type="submit" class="btn-search">Search</button>
+          <button type="submit" class="btn-search">🔎 Search</button>
         </div>
       </form>
 
-      <div class="loading" id="loading">Loading...</div>
+      <div class="loading" id="loading">⏳ Loading...</div>
 
       <div class="error" id="error"></div>
 
       <div class="classification" id="classification">
-        <h3>Classification Result</h3>
+        <h3>📋 Classification Result</h3>
         <div class="classification-row">
           <div class="classification-item">
             <label>Subject</label>
@@ -293,14 +397,26 @@
       </div>
 
       <div class="sources" id="sources">
-        <h3>Results</h3>
+        <h3>📚 Search Results</h3>
         <div id="sourcesList"></div>
+      </div>
+
+      <!-- Rerank Section -->
+      <div class="rerank-section" id="rerankSection">
+        <h3>⚡ Reranked Results</h3>
+        <button type="button" class="btn-rerank" id="rerankBtn">
+          🔄 Rerank Results
+        </button>
+        <div id="rerankResults" class="rerank-results"></div>
       </div>
     </div>
 
     <script>
       const API_URL = "http://localhost:3000";
+      let currentResults = [];
+      let currentQuery = "";
 
+      // Classify button
       document
         .getElementById("classifyBtn")
         .addEventListener("click", async () => {
@@ -331,6 +447,7 @@
           }
         });
 
+      // Search form
       document
         .getElementById("tutorForm")
         .addEventListener("submit", async (e) => {
@@ -365,19 +482,25 @@
               const html = data.sources
                 .map(
                   (s, i) => `
-                        <div class="source-item">
-                            <div class="source-title">${i + 1}. ${s.metadata?.title || "Result"}</div>
-                            <div class="source-text">${s.text}</div>
-                            <div class="source-meta">
-                                Source: ${s.metadata?.source || "unknown"}
-                                ${s.metadata?.url ? `<a href="${s.metadata.url}" target="_blank" class="source-url">View</a>` : ""}
-                            </div>
-                        </div>
-                    `
+                  <div class="source-item">
+                      <div class="source-title">${i + 1}. ${s.metadata?.title || "Result"}</div>
+                      <div class="source-text">${s.text}</div>
+                      <div class="source-meta">
+                          Source: ${s.metadata?.source || "unknown"}
+                          ${s.metadata?.url ? `<a href="${s.metadata.url}" target="_blank" class="source-url">View</a>` : ""}
+                      </div>
+                  </div>
+              `
                 )
                 .join("");
               document.getElementById("sourcesList").innerHTML = html;
               document.getElementById("sources").classList.add("active");
+
+              // Save for reranking
+              currentResults = data.sources;
+              currentQuery = msg;
+              document.getElementById("rerankSection").classList.add("active");
+              document.getElementById("rerankResults").innerHTML = ""; // Clear previous rerank
             } else {
               showError("No results found");
             }
@@ -387,6 +510,71 @@
             showError(err.message);
           } finally {
             hideLoading();
+          }
+        });
+
+      // Rerank button
+      document
+        .getElementById("rerankBtn")
+        .addEventListener("click", async () => {
+          if (currentResults.length === 0) {
+            alert("No results to rerank");
+            return;
+          }
+
+          const rerankBtn = document.getElementById("rerankBtn");
+          const rerankResults = document.getElementById("rerankResults");
+
+          try {
+            rerankBtn.disabled = true;
+            rerankBtn.textContent = "⏳ Reranking...";
+
+            const response = await fetch(`${API_URL}/rerank`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                documents: currentResults,
+                query: currentQuery,
+                topK: 3,
+              }),
+            });
+
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.message || "Reranking failed");
+            }
+
+            const data = await response.json();
+            console.log("✅ Reranked:", data);
+
+            // Display reranked results
+            rerankResults.innerHTML = data.results
+              .map(
+                (r, i) => `
+              <div class="rerank-item">
+                <div class="rerank-header">
+                  <div class="rerank-title">#${i + 1} ${r.metadata?.title || "Result"}</div>
+                  <div class="score-comparison">
+                    <span class="score-badge score-original">
+                      ${(r.original_score * 100).toFixed(0)}%
+                    </span>
+                    <span class="score-badge score-reranked">
+                      ${(r.reranked_score * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+                <div class="rerank-text">${r.text.substring(0, 300)}...</div>
+                <div class="rerank-reason"> ${r.reason}</div>
+              </div>
+            `
+              )
+              .join("");
+          } catch (err) {
+            console.error("❌ Reranking error:", err);
+            alert("Reranking failed: " + err.message);
+          } finally {
+            rerankBtn.textContent = "🔄 Rerank Results";
+            rerankBtn.disabled = false;
           }
         });
 

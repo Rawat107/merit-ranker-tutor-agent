@@ -1,10 +1,12 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-import { appConfig } from './config/modelConfig.js';
+import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
 import { ChatRequest, AITutorResponse } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
+import { Document } from './types/index.js';
 import pino from 'pino';
+import { id } from 'zod/v4/locales';
 
 /**
  * Main Fastify server with LangChain AI Tutor orchestration
@@ -146,6 +148,65 @@ server.post<{ Body: { query: string } }>('/classify', {
   }
 });
 
+//Adding reranker endpoint
+
+server.post<{Body: {
+  documents: Document[];
+  query: string;
+  topK?: number;
+  };
+}>('/rerank', async(request, reply ) => {
+  try{
+    const {documents, query, topK} = request.body;
+
+    if(!documents || documents.length === 0){
+      reply.status(400);
+      return {error: 'Documents array is required and cannot be empty'};
+    }
+
+    if(!query || query.trim() === ''){
+      reply.status(400);
+      return {error: 'Query string is required and cannot be empty'};
+    }
+
+    server.log.info(
+      {docCount: documents.length, query: query.substring(0, 50), topK },
+      '[Server] Reranking request received'
+    );
+
+    const rerankerConfig = modelConfigService.getRerankerConfig()
+    const reranker = container.getReranker();
+
+    const rerankedResults = await reranker.rerank(documents, query, topK);
+
+    server.log.info(
+      { originalCount: documents.length, rerankedCount: rerankedResults.length },
+      '[Server] Reranking completed'
+    );
+
+    reply.type('application/json');
+    return {
+      success: true,
+      original_count: documents.length,
+      reranked_count: rerankedResults.length,
+      model_used: rerankerConfig.modelId,
+      results: rerankedResults.map(r => ({
+        id: r.document.id,
+        text: r.document.text,
+        metadata: r.document.metadata,
+        original_score: r.document.score || 0,
+        reranked_score: r.score,
+        reason: r.reason,
+      }))
+    };
+    } catch (error) {
+      server.log.error(error, '[Server] Reranking failed');
+      reply.status(500);
+      const msg = error instanceof Error ? error.message : 'unknown';
+      return { success: false, error: msg };
+
+  }
+})
 
   // Streaming chat endpoint using Server-Sent Events
   server.get<{ Querystring: { message: string; subject?: string; level?: string; userSubscription?: string } }>(

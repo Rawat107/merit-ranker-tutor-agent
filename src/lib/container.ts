@@ -11,12 +11,13 @@ export function createContainer(logger: pino.Logger) {
   const classifier = new Classifier(logger, undefined /* optionally await modelSelector.getClassifierLLM() */);
   const cache = new SemanticCache(logger);
   const retriever = new AWSKnowledgeBaseRetriever(logger);
-  const reranker = new Reranker(modelSelector, logger, false /* use LLM reranker if available */);
+  const reranker = new Reranker(logger);
 
   const tutorChain = new TutorChain(classifier, retriever, modelSelector, logger);
 
-  return {
+   return {
     getTutorChain: () => tutorChain,
     getLogger: () => logger,
+    getReranker: () => reranker,  
   };
 }
