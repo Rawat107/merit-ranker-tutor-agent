@@ -13,12 +13,12 @@ export const tutorConfigData: TutorConfig = {
     },
     "basic": {
       "description": "Balanced cost/quality — use mid-tier models like claude-3.5 or small Bedrock models.",
-      "preferredModels": ["anthropic.claude-3-sonnet-20240229-v1:0", "openai.gpt-oss-20b-1:0"],
+      "preferredModels": ["anthropic.claude-3-sonnet-20240229-v1:0", "anthropic.claude-sonnet-4-20250514-v1:0"],
       "maxTokensMultiplier": 1.0
     },
     "premium": {
       "description": "Higher quality — use stronger models for final verification and complex reasoning.",
-      "preferredModels": ["anthropic.claude-3-5-sonnet-20241022-v2:0", "openai.gpt-oss-120b-1:0"],
+      "preferredModels": ["anthropic.claude-3-5-sonnet-20241022-v2:0", "anthropic.claude-sonnet-4-20250514-v1:0"],
       "maxTokensMultiplier": 1.3
     }
   },
@@ -26,10 +26,9 @@ export const tutorConfigData: TutorConfig = {
     "gpt-3.5-turbo": { "bedrockId": "gpt-3.5-turbo", "invokeId": "gpt-3.5-turbo", "inferenceProfileArn": null, "region": "ap-south-1" },
     "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.amazon.nova-micro-v1:0", "region": "ap-south-1" },
     "amazon.rerank-v1:0": { "bedrockId": "cohere.rerank-v3-5:0", "invokeId": "cohere.rerank-v3-5:0", "inferenceProfileArn": "arn:aws:bedrock:region::foundation-model/amazon.rerank-v1:0", "region": "ap-south-1" },
-    "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "openai.gpt-oss-20b-1:0": { "bedrockId": "openai.gpt-oss-20b-1:0", "invokeId": "openai.gpt-oss-20b-1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "openai.gpt-oss-120b-1:0": { "bedrockId": "openai.gpt-oss-120b-1:0", "invokeId": "openai.gpt-oss-120b-1:0", "inferenceProfileArn": null, "region": "ap-south-1" }
+    "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-sonnet-20240229-v1:0", "region": "ap-south-1" },
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0", "region": "ap-south-1" },
+    "anthropic.claude-sonnet-4-20250514-v1:0": { "bedrockId": "anthropic.claude-sonnet-4-20250514-v1:0", "invokeId": "anthropic.claude-sonnet-4-20250514-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-sonnet-4-20250514-v1:0", "region": "ap-south-1" }
   },
   "classifier": {
     "modelId": "amazon.nova-micro-v1:0",
@@ -62,7 +61,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Detailed answer with citations and short summary."
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-20b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1600,
         "temperature": 0.0,
         "systemPrompt": "You are an expert tutor. Provide authoritative, citation-backed answers, check reasoning, and flag uncertainty.",
@@ -85,7 +84,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Detailed steps + verification"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-120b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 2000,
         "temperature": 0.0,
         "systemPrompt": "You are an expert mathematician. Provide proofs, derivations, and verify via computation where applicable.",
@@ -108,7 +107,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Reasoned steps + verified conclusion"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-120b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1600,
         "temperature": 0.0,
         "systemPrompt": "You are an expert reasoner. Provide rigorous reasoning and indicate confidence and sources.",
@@ -131,7 +130,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Corrected text + explanation"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-20b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1200,
         "temperature": 0.0,
         "systemPrompt": "You are an expert English linguist. Provide authoritative corrections, alternatives, and style notes.",
@@ -140,13 +139,13 @@ export const tutorConfigData: TutorConfig = {
     },
     "science": {
       "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a science tutor. Keep explanations simple and factual.", "outputFormat": "Answer + simple explanation" },
-      "intermediate": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a science assistant. Provide sourced explanations and reasoning.", "outputFormat": "Answer + citations" },
-      "advanced": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert scientist. Provide thorough explanations, citations, and confidence.", "outputFormat": "Detailed answer + citations" }
+      "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a science assistant. Provide sourced explanations and reasoning.", "outputFormat": "Answer + citations" },
+      "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert scientist. Provide thorough explanations, citations, and confidence.", "outputFormat": "Detailed answer + citations" }
     },
     "history": {
       "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a history tutor. Provide concise historical facts and timelines.", "outputFormat": "Facts + timeline" },
-      "intermediate": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
-      "advanced": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
+      "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
+      "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
     }
   }
 };

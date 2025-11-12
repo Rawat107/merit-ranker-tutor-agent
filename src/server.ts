@@ -2,20 +2,19 @@ import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
-import { ChatRequest, AITutorResponse } from './types/index.js';
+import { ChatRequest, AITutorResponse, Classification, Document } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
-import { Document } from './types/index.js';
 import pino from 'pino';
-import { id } from 'zod/v4/locales';
 
 /**
- * Main Fastify server with LangChain AI Tutor orchestration
+ * Main Fastify server with LangChain AI Tutor orchestration + Evaluate endpoint
  */
 export async function createServer(): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
       level: appConfig.logLevel,
-      transport: appConfig.nodeEnv === 'development' ? { target: 'pino-pretty' } : undefined
+      transport:
+        appConfig.nodeEnv === 'development' ? { target: 'pino-pretty' } : undefined,
     },
     keepAliveTimeout: 60_000,
     requestTimeout: 30_000,
@@ -31,9 +30,7 @@ export async function createServer(): Promise<FastifyInstance> {
 
   // Initialize DI container
   const container = createContainer(logger);
-
   const classifier = new Classifier(logger);
-
 
   // Health check endpoints
   server.get('/health', async () => {
@@ -42,7 +39,6 @@ export async function createServer(): Promise<FastifyInstance> {
 
   server.get('/ready', async () => {
     try {
-      // TODO: Check dependencies (AWS, etc.)
       return { status: 'ready', services: { bedrock: 'ok' } };
     } catch (error) {
       server.log.error(error, 'Readiness check failed');
@@ -51,216 +47,284 @@ export async function createServer(): Promise<FastifyInstance> {
     }
   });
 
-  // Non-streaming chat endpoint
-  // Non-streaming chat endpoint
-// POST /chat with { message, subject?, level? }
-server.post<{ Body: ChatRequest }>('/chat', {
-  schema: {
-    body: {
-      type: 'object',
-      required: ['message'],
-      properties: {
-        message: { type: 'string' },
-        subject: { type: 'string' },           // Optional: from classifier
-        level: { type: 'string' },              // Optional: from classifier
-        userSubscription: { type: 'string' },
-        sessionId: { type: 'string' },
-        language: { type: 'string' },
-        examPrep: { type: 'boolean' }
-      }
-    }
-  }
-}, async (request, reply) => {
-  try {
-    const tutorChain = container.getTutorChain();
-    
-    // Log incoming request
-    server.log.info(
-      {
-        message: request.body.message.substring(0, 100),
-        subject: request.body.subject || 'auto-classify',
-        level: request.body.level || 'auto-classify'
+  /**
+   * POST /chat - Initial chat request (returns classification + retrieval, ready for evaluation)
+   */
+  server.post<{ Body: ChatRequest }>('/chat', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['message'],
+        properties: {
+          message: { type: 'string' },
+          subject: { type: 'string' },
+          level: { type: 'string' },
+          userSubscription: { type: 'string' },
+          sessionId: { type: 'string' },
+          language: { type: 'string' },
+          examPrep: { type: 'boolean' },
+        },
       },
-      '[Chat] 📝 Incoming request'
-    );
+    }
+  }, async (request, reply) => {
+    try {
+      const tutorChain = container.getTutorChain();
 
-    // Run tutor chain
-    const result = await tutorChain.run(request.body);
+      server.log.info(
+        {
+          message: request.body.message.substring(0, 100),
+          subject: request.body.subject || 'auto-classify',
+          level: request.body.level || 'auto-classify',
+        },
+        '[Chat] 📝 Incoming request'
+      );
 
-    // Log response
-    server.log.info(
-      {
-        subject: result.classification.subject,
-        sourceCount: result.sources?.length || 0,
-        confidence: result.classification.confidence
+      // Run tutor chain (classifier + retrieval)
+      const result = await tutorChain.run(request.body);
+
+      server.log.info(
+        {
+          subject: result.classification.subject,
+          sourceCount: result.sources?.length || 0,
+          confidence: result.classification.confidence,
+        },
+        '[Chat] ✅ Response ready'
+      );
+
+      reply.type('application/json');
+      return result;
+    } catch (error) {
+      server.log.error(error, '[Chat] ❌ Chat request failed');
+      reply.status(500);
+      const msg = error instanceof Error ? error.message : 'unknown error';
+      return {
+        error: 'Internal server error',
+        message: msg,
+      };
+    }
+  });
+
+  /**
+   * POST /evaluate - Evaluate prompt and generate final response
+   * Called when user clicks "Evaluate" button on frontend
+   */
+  server.post<{
+    Body: {
+      userQuery: string;
+      classification: Classification;
+      documents: Document[];
+      userSubscription?: string;
+    };
+  }>('/evaluate', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['userQuery', 'classification', 'documents'],
+        properties: {
+          userQuery: { type: 'string' },
+          classification: {
+            type: 'object',
+            properties: {
+              subject: { type: 'string' },
+              level: { type: 'string' },
+              confidence: { type: 'number' },
+              intent: { type: 'string' },
+            },
+          },
+          documents: {
+            type: 'array',
+            items: { type: 'object' },
+          },
+          userSubscription: { type: 'string' },
+        },
       },
-      '[Chat] ✅ Response ready'
-    );
+    }
+  }, async (request, reply) => {
+    try {
+      const { userQuery, classification, documents, userSubscription } = request.body;
 
-    reply.type('application/json');
-    return result;
-
-  } catch (error) {
-    server.log.error(error, '[Chat] ❌ Chat request failed');
-    reply.status(500);
-    const msg = error instanceof Error ? error.message : 'unknown error';
-    return { 
-      error: 'Internal server error', 
-      message: msg 
-    };
-  }
-});
-
-  // Query classification endpoint
-server.post<{ Body: { query: string } }>('/classify', {
-  schema: {
-    body: {
-      type: 'object',
-      required: ['query'],
-      properties: {
-        query: { type: 'string' }
+      if (!userQuery || userQuery.trim() === '') {
+        reply.status(400);
+        return { error: 'userQuery is required and cannot be empty' };
       }
+
+      if (!classification) {
+        reply.status(400);
+        return { error: 'classification is required' };
+      }
+
+      if (!Array.isArray(documents)) {
+        reply.status(400);
+        return { error: 'documents must be an array' };
+      }
+
+      server.log.info(
+        {
+          query: userQuery.substring(0, 80),
+          subject: classification.subject,
+          confidence: classification.confidence,
+          docCount: documents.length,
+        },
+        '[Evaluate] 🔬 Evaluation request received'
+      );
+
+      const tutorChain = container.getTutorChain();
+
+      // Call evaluate on TutorChain
+      const evaluateResult = await tutorChain.evaluate(
+        userQuery,
+        classification,
+        documents,
+        userSubscription || 'free'
+      );
+
+      server.log.info(
+        {
+          modelUsed: evaluateResult.modelUsed,
+          levelUsed: evaluateResult.levelUsed,
+          latency: evaluateResult.latency,
+          answerLength: evaluateResult.answer.length,
+        },
+        '[Evaluate] ✅ Evaluation complete'
+      );
+
+      reply.type('application/json');
+      return {
+        success: true,
+        data: {
+          answer: evaluateResult.answer,
+          modelUsed: evaluateResult.modelUsed,
+          levelUsed: evaluateResult.levelUsed,
+          latency: evaluateResult.latency,
+          classification,
+          sources: documents,
+        },
+      };
+    } catch (error) {
+      server.log.error(error, '[Evaluate] ❌ Evaluation failed');
+      reply.status(500);
+      const msg = error instanceof Error ? error.message : 'unknown error';
+      return {
+        success: false,
+        error: 'Evaluation failed',
+        message: msg,
+      };
     }
-  }
-}, async (request, reply) => {
-  try {
-    const { query } = request.body;
-    const result = await classifier.classify(query);
+  });
 
-    server.log.info({ 
-      query, 
-      subject: result.subject, 
-      level: result.level, 
-      confidence: result.confidence 
-    }, '✓ Classification result');
+  /**
+   * POST /classify - Query classification endpoint
+   */
+  server.post<{ Body: { query: string } }>('/classify', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['query'],
+        properties: {
+          query: { type: 'string' },
+        },
+      },
+    }
+  }, async (request, reply) => {
+    try {
+      const { query } = request.body;
+      const result = await classifier.classify(query);
 
-    reply.type('application/json');
-    return {
-      success: true,
-      query,
-      classification: result
+      server.log.info(
+        {
+          query,
+          subject: result.subject,
+          level: result.level,
+          confidence: result.confidence,
+          intent: (result as any).intent,
+        },
+        '✓ Classification result with intent'
+      );
+
+      reply.type('application/json');
+      return {
+        success: true,
+        query,
+        classification: {
+          subject: result.subject,
+          level: result.level,
+          confidence: result.confidence,
+          intent: (result as any).intent,
+          expectedFormat: (result as any).expectedFormat,
+        },
+      };
+    } catch (error) {
+      server.log.error(error, 'Classification failed');
+      reply.status(500);
+      const msg = error instanceof Error ? error.message : 'unknown';
+      return { success: false, error: msg };
+    }
+  });
+
+  /**
+   * POST /rerank - Reranker endpoint
+   */
+  server.post<{
+    Body: {
+      documents: Document[];
+      query: string;
+      topK?: number;
     };
-  } catch (error) {
-    server.log.error(error, 'Classification failed');
-    reply.status(500);
-    const msg = error instanceof Error ? error.message : 'unknown';
-    return { success: false, error: msg };
-  }
-});
+  }>('/rerank', async (request, reply) => {
+    try {
+      const { documents, query, topK } = request.body;
 
-//Adding reranker endpoint
+      if (!documents || documents.length === 0) {
+        reply.status(400);
+        return { error: 'Documents array is required and cannot be empty' };
+      }
 
-server.post<{Body: {
-  documents: Document[];
-  query: string;
-  topK?: number;
-  };
-}>('/rerank', async(request, reply ) => {
-  try{
-    const {documents, query, topK} = request.body;
+      if (!query || query.trim() === '') {
+        reply.status(400);
+        return { error: 'Query string is required and cannot be empty' };
+      }
 
-    if(!documents || documents.length === 0){
-      reply.status(400);
-      return {error: 'Documents array is required and cannot be empty'};
-    }
+      server.log.info(
+        { docCount: documents.length, query: query.substring(0, 50), topK },
+        '[Server] Reranking request received'
+      );
 
-    if(!query || query.trim() === ''){
-      reply.status(400);
-      return {error: 'Query string is required and cannot be empty'};
-    }
+      const rerankerConfig = modelConfigService.getRerankerConfig();
+      const reranker = container.getReranker();
 
-    server.log.info(
-      {docCount: documents.length, query: query.substring(0, 50), topK },
-      '[Server] Reranking request received'
-    );
+      const rerankedResults = await reranker.rerank(documents, query, topK);
 
-    const rerankerConfig = modelConfigService.getRerankerConfig()
-    const reranker = container.getReranker();
+      server.log.info(
+        { originalCount: documents.length, rerankedCount: rerankedResults.length },
+        '[Server] Reranking completed'
+      );
 
-    const rerankedResults = await reranker.rerank(documents, query, topK);
-
-    server.log.info(
-      { originalCount: documents.length, rerankedCount: rerankedResults.length },
-      '[Server] Reranking completed'
-    );
-
-    reply.type('application/json');
-    return {
-      success: true,
-      original_count: documents.length,
-      reranked_count: rerankedResults.length,
-      model_used: rerankerConfig.modelId,
-      results: rerankedResults.map(r => ({
-        id: r.document.id,
-        text: r.document.text,
-        metadata: r.document.metadata,
-        original_score: r.document.score || 0,
-        reranked_score: r.score,
-        reason: r.reason,
-      }))
-    };
+      reply.type('application/json');
+      return {
+        success: true,
+        original_count: documents.length,
+        reranked_count: rerankedResults.length,
+        model_used: rerankerConfig.modelId,
+        results: rerankedResults.map(r => ({
+          id: r.document.id,
+          text: r.document.text,
+          metadata: r.document.metadata,
+          original_score: r.document.score || 0,
+          reranked_score: r.score,
+          reason: r.reason,
+        })),
+      };
     } catch (error) {
       server.log.error(error, '[Server] Reranking failed');
       reply.status(500);
       const msg = error instanceof Error ? error.message : 'unknown';
       return { success: false, error: msg };
-
-  }
-})
-
-  // Streaming chat endpoint using Server-Sent Events
-  server.get<{ Querystring: { message: string; subject?: string; level?: string; userSubscription?: string } }>(
-    '/chat/stream',
-    async (request, reply) => {
-      const { message, subject, level, userSubscription } = request.query;
-      
-      if (!message) {
-        reply.status(400);
-        return { error: 'Message parameter is required' };
-      }
-
-      // Set SSE headers
-      reply.type('text/event-stream');
-      reply.header('Cache-Control', 'no-cache');
-      reply.header('Connection', 'keep-alive');
-      reply.header('Access-Control-Allow-Origin', '*');
-      reply.header('Access-Control-Allow-Headers', 'Cache-Control');
-
-      const tutorChain = container.getTutorChain();
-      const chatRequest: ChatRequest = {
-        message,
-        subject,
-        level,
-        userSubscription
-      };
-
-      try {
-        await tutorChain.runStreaming(chatRequest, {
-          onToken: (token: string) => {
-            reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
-          },
-          onMetadata: (metadata: any) => {
-            reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
-          },
-          onComplete: (result: AITutorResponse) => {
-            reply.raw.write(`data: ${JSON.stringify({ type: 'complete', content: result })}\n\n`);
-            reply.raw.write('data: [DONE]\n\n');
-            reply.raw.end();
-          },
-          onError: (error: Error) => {
-            reply.raw.write(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
-            reply.raw.end();
-          }
-        });
-      } catch (error) {
-        server.log.error(error, 'Streaming chat failed');
-        reply.raw.write(`data: ${JSON.stringify({ type: 'error', content: 'Streaming failed' })}\n\n`);
-        reply.raw.end();
-      }
     }
-  );
+  });
 
-  // Graceful shutdown
+  /**
+   * Graceful shutdown
+   */
   const gracefulShutdown = () => {
     server.log.info('Received shutdown signal, starting graceful shutdown...');
     server.close(() => {
@@ -281,17 +345,17 @@ server.post<{Body: {
 async function startServer() {
   try {
     const server = await createServer();
-    
+
     // Start listening
-    await server.listen({ 
-      port: appConfig.port, 
-      host: '0.0.0.0' 
+    await server.listen({
+      port: appConfig.port,
+      host: '0.0.0.0',
     });
-    
+
     server.log.info(`🚀 AI Tutor Service running on http://localhost:${appConfig.port}`);
     server.log.info(`📊 Health check: http://localhost:${appConfig.port}/health`);
     server.log.info(`🔄 Ready check: http://localhost:${appConfig.port}/ready`);
-    
+
     return server;
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -303,3 +367,5 @@ async function startServer() {
 if (import.meta.url.endsWith('server.ts')) {
   startServer();
 }
+
+export { startServer };
