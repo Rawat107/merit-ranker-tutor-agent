@@ -50,36 +50,64 @@ export async function createServer(): Promise<FastifyInstance> {
   });
 
   // Non-streaming chat endpoint
-  server.post<{ Body: ChatRequest }>('/chat', {
-    schema: {
-      body: {
-        type: 'object',
-        required: ['message'],
-        properties: {
-          message: { type: 'string' },
-          subject: { type: 'string' },
-          level: { type: 'string' },
-          userSubscription: { type: 'string' },
-          sessionId: { type: 'string' },
-          language: { type: 'string' },
-          examPrep: { type: 'boolean' }
-        }
+  // Non-streaming chat endpoint
+// POST /chat with { message, subject?, level? }
+server.post<{ Body: ChatRequest }>('/chat', {
+  schema: {
+    body: {
+      type: 'object',
+      required: ['message'],
+      properties: {
+        message: { type: 'string' },
+        subject: { type: 'string' },           // Optional: from classifier
+        level: { type: 'string' },              // Optional: from classifier
+        userSubscription: { type: 'string' },
+        sessionId: { type: 'string' },
+        language: { type: 'string' },
+        examPrep: { type: 'boolean' }
       }
     }
-  }, async (request, reply) => {
-    try {
-      const tutorChain = container.getTutorChain();
-      const result = await tutorChain.run(request.body);
-      
-      reply.type('application/json');
-      return result;
-    } catch (error) {
-      server.log.error(error, 'Chat request failed');
-      reply.status(500);
-      const msg = error instanceof Error ? error.message : 'unknown';
-      return { error: 'Internal server error', message: msg };
-    }
-  });
+  }
+}, async (request, reply) => {
+  try {
+    const tutorChain = container.getTutorChain();
+    
+    // Log incoming request
+    server.log.info(
+      {
+        message: request.body.message.substring(0, 100),
+        subject: request.body.subject || 'auto-classify',
+        level: request.body.level || 'auto-classify'
+      },
+      '[Chat] 📝 Incoming request'
+    );
+
+    // Run tutor chain
+    const result = await tutorChain.run(request.body);
+
+    // Log response
+    server.log.info(
+      {
+        subject: result.classification.subject,
+        sourceCount: result.sources?.length || 0,
+        confidence: result.classification.confidence
+      },
+      '[Chat] ✅ Response ready'
+    );
+
+    reply.type('application/json');
+    return result;
+
+  } catch (error) {
+    server.log.error(error, '[Chat] ❌ Chat request failed');
+    reply.status(500);
+    const msg = error instanceof Error ? error.message : 'unknown error';
+    return { 
+      error: 'Internal server error', 
+      message: msg 
+    };
+  }
+});
 
   // Query classification endpoint
 server.post<{ Body: { query: string } }>('/classify', {
