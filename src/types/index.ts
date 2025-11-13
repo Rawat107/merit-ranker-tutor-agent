@@ -2,6 +2,8 @@ export interface Classification {
   subject: string;
   level: 'basic' | 'intermediate' | 'advanced';
   confidence: number;
+  intent?: string; // NEW
+  expectedFormat?: string;
 }
 
 export interface Document {
@@ -18,6 +20,11 @@ export interface AITutorResponse {
   classification: Classification;
   cached?: boolean;
   reasoning?: string;
+  metadata?: {
+    stage?: string;
+    message?: string;
+    [key: string]: any;
+  };
 }
 
 export interface StreamingCallbacks {
@@ -96,4 +103,9 @@ export interface WebSearchResult {
   url: string;
   snippet: string;
   relevance?: number;
+}
+
+export interface ClassificationWithIntent extends Classification {
+  intent?: string;
+  expectedFormat?: string;
 }

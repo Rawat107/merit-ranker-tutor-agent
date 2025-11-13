@@ -2,7 +2,9 @@ import { ChatRequest, AITutorResponse, Classification, Document } from '../types
 import { Classifier } from '../classifier/Classifier.js';
 import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
+import { Reranker } from '../reranker/Reranker.js';
 import { webSearchTool } from '../tools/webSearch.js';
+import { EvaluatePrompt, EvaluatePromptInput, EvaluatePromptOutput } from '../prompts/evaluatorPrompt.js';
 import pino from 'pino';
 
 const USER_PREFS = {
@@ -23,18 +25,23 @@ export class TutorChain {
   private classifier: Classifier;
   private retriever: AWSKnowledgeBaseRetriever;
   private modelSelector: ModelSelector;
+  private reranker: Reranker;
+  private evaluatePrompt: EvaluatePrompt;
   private logger: pino.Logger;
 
   constructor(
     classifier: Classifier,
     retriever: AWSKnowledgeBaseRetriever,
     modelSelector: ModelSelector,
+    reranker: Reranker,
     logger: pino.Logger
   ) {
     this.classifier = classifier;
     this.retriever = retriever;
     this.modelSelector = modelSelector;
+    this.reranker = reranker;
     this.logger = logger;
+    this.evaluatePrompt = new EvaluatePrompt(modelSelector, logger);
   }
 
   /**
@@ -46,68 +53,78 @@ export class TutorChain {
     onProgress?: (message: string) => void
   ): Promise<Document[]> {
     const isAcademicSubject = this.isAcademicSubject(classification.subject);
-    const isCurrentAffairs = classification.subject === 'current_affairs' || 
-                             classification.subject === 'general_knowledge';
+    const isCurrentAffairs =
+      classification.subject === 'current_affairs' ||
+      classification.subject === 'general_knowledge';
 
     let retrievedDocs: Document[] = [];
 
     if (isCurrentAffairs) {
-      // ROUTE 1: Web Search for current affairs
       this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-      onProgress?.('Searching web...\n');
+      onProgress?.('Searching web...\\n');
       retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
     } else if (isAcademicSubject) {
-      // ROUTE 2: Knowledge Base for academic subjects with fallback
       this.logger.info('[TutorChain] Route: Knowledge Base (Academic)');
-      onProgress?.('Searching knowledge base...\n');
-      
+      onProgress?.('Searching knowledge base...\\n');
       retrievedDocs = await this.retriever.getRelevantDocuments(query, {
         subject: classification.subject,
         level: classification.level,
         k: 5,
       });
 
-      // Check if fallback needed
-      const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined 
-        ? retrievedDocs[0].score 
-        : 0;
+      const topScore =
+        retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
+          ? retrievedDocs[0].score
+          : 0;
+
       const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
-      
+
       if (shouldFallback) {
-        const reason = retrievedDocs.length === 0 
-          ? 'KB empty' 
-          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
-        
+        const reason =
+          retrievedDocs.length === 0
+            ? 'KB empty'
+            : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+
         this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
-        onProgress?.(`${retrievedDocs.length === 0 ? 'No KB results' : `Low relevance (${(topScore * 100).toFixed(1)}%)`}, trying web search...\n`);
-        
+        onProgress?.(
+          `${
+            retrievedDocs.length === 0
+              ? 'No KB results'
+              : `Low relevance (${(topScore * 100).toFixed(1)}%)`
+          }, trying web search...\\n`
+        );
         retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
       }
     } else {
-      // ROUTE 3: Try KB for general subjects with fallback
       this.logger.info('[TutorChain] Route: Knowledge Base (General)');
-      onProgress?.('Searching knowledge base...\n');
-      
+      onProgress?.('Searching knowledge base...\\n');
       retrievedDocs = await this.retriever.getRelevantDocuments(query, {
         subject: classification.subject,
         level: classification.level,
         k: 5,
       });
 
-      // Check if fallback needed
-      const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined 
-        ? retrievedDocs[0].score 
-        : 0;
+      const topScore =
+        retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
+          ? retrievedDocs[0].score
+          : 0;
+
       const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
-      
+
       if (shouldFallback) {
-        const reason = retrievedDocs.length === 0 
-          ? 'KB empty' 
-          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
-        
+        const reason =
+          retrievedDocs.length === 0
+            ? 'KB empty'
+            : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+
         this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
-        onProgress?.(`${retrievedDocs.length === 0 ? 'No KB results' : `Low relevance (${(topScore * 100).toFixed(1)}%)`}, trying web search...\n`);
-        
+        onProgress?.(
+          `${
+            retrievedDocs.length === 0
+              ? 'No KB results'
+              : `Low relevance (${(topScore * 100).toFixed(1)}%)`
+          }, trying web search...\\n`
+        );
         retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
       }
     }
@@ -116,7 +133,7 @@ export class TutorChain {
   }
 
   /**
-   * Main execution method (non-streaming)
+   * Main execution method (classification + retrieval)
    */
   private async execute(request: ChatRequest): Promise<AITutorResponse> {
     this.logger.info(
@@ -127,31 +144,153 @@ export class TutorChain {
     try {
       // STEP 1: Classification
       const classification = await this.classifyQuery(request);
+
       this.logger.info(
-        { subject: classification.subject, confidence: classification.confidence },
-        '[TutorChain] Classification: ' + classification.subject
+        {
+          subject: classification.subject,
+          confidence: classification.confidence,
+          intent: (classification as any).intent,
+        },
+        '[TutorChain] Classification complete'
       );
 
-      // STEP 2: Retrieve documents using shared logic
-      const retrievedDocs = await this.retrieveDocuments(
-        request.message,
-        classification
-      );
+      // STEP 2: Retrieve documents
+      const retrievedDocs = await this.retrieveDocuments(request.message, classification);
 
       this.logger.info(
         { sourcesCount: retrievedDocs.length },
-        '[TutorChain] Complete'
+        '[TutorChain] Retrieval complete'
       );
 
+      // Return for UI to show rerank button
       return {
         answer: '',
         sources: retrievedDocs,
         classification,
         cached: false,
         confidence: classification.confidence,
+        metadata: {
+          stage: 'ready_for_reranking',
+          message: 'Click "Rerank Documents" to rank by relevance',
+        },
       };
     } catch (error) {
       this.logger.error(error, '[TutorChain] Error');
+      throw error;
+    }
+  }
+
+  /**
+   * STREAMING EVALUATE: Generate final response after reranking with streaming
+   * This is called when user clicks "Evaluate" button for streaming responses
+   */
+  async evaluateStreaming(
+    userQuery: string,
+    classification: Classification,
+    documents: Document[],
+    subscription: string = 'free',
+    callbacks: {
+      onToken: (token: string) => void;
+      onMetadata: (metadata: any) => void;
+      onComplete: (result: EvaluatePromptOutput) => void;
+      onError: (error: Error) => void;
+    }
+  ): Promise<void> {
+    this.logger.info(
+      {
+        query: userQuery.substring(0, 80),
+        subject: classification.subject,
+        confidence: classification.confidence,
+        docCount: documents.length,
+      },
+      '[TutorChain] Streaming evaluate step started'
+    );
+
+    try {
+      // Get top document as context
+      const topDocument = documents.length > 0 ? documents[0] : null;
+
+      this.logger.debug(
+        { hasTopDoc: !!topDocument },
+        '[TutorChain] Top document selected for streaming'
+      );
+
+      // Send initial metadata
+      callbacks.onMetadata({
+        step: 'preparation',
+        docCount: documents.length,
+        classification,
+      });
+
+      // Call EvaluatePrompt with streaming
+      const evaluateInput: EvaluatePromptInput = {
+        userQuery,
+        classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription,
+      };
+
+      await this.evaluatePrompt.evaluateStreaming(evaluateInput, callbacks);
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Streaming evaluate failed');
+      callbacks.onError(error as Error);
+    }
+  }
+
+  /**
+   * EVALUATE: Generate final response after reranking
+   * This is called when user clicks "Evaluate" button
+   */
+  async evaluate(
+    userQuery: string,
+    classification: Classification,
+    documents: Document[],
+    subscription?: string
+  ): Promise<EvaluatePromptOutput> {
+    this.logger.info(
+      {
+        query: userQuery.substring(0, 80),
+        subject: classification.subject,
+        confidence: classification.confidence,
+        docCount: documents.length,
+      },
+      '[TutorChain] Evaluate step started'
+    );
+
+    try {
+      // Get top document as shot
+      const topDocument = documents.length > 0 ? documents[0] : null;
+
+      this.logger.debug(
+        { hasTopDoc: !!topDocument },
+        '[TutorChain] Top document selected'
+      );
+
+      // Call EvaluatePrompt with all context
+      const evaluateInput: EvaluatePromptInput = {
+        userQuery,
+        classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription,
+      };
+
+      const output = await this.evaluatePrompt.evaluate(evaluateInput);
+
+      this.logger.info(
+        {
+          modelUsed: output.modelUsed,
+          levelUsed: output.levelUsed,
+          latency: output.latency,
+          answerLength: output.answer.length,
+        },
+        '[TutorChain] Evaluate complete'
+      );
+
+      return output;
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Evaluate failed');
       throw error;
     }
   }
@@ -171,31 +310,34 @@ export class TutorChain {
     return academicSubjects.includes(subject);
   }
 
+  /**
+   * Public run method
+   */
   async run(request: ChatRequest): Promise<AITutorResponse> {
     return this.execute(request);
   }
 
-  async runStreaming(
-    request: ChatRequest,
-    handlers: StreamingHandlers
-  ): Promise<void> {
+  /**
+   * Streaming version
+   */
+  async runStreaming(request: ChatRequest, handlers: StreamingHandlers): Promise<void> {
     try {
-      handlers.onToken('[AI Tutor]\n');
+      handlers.onToken('[AI Tutor]\\n');
 
-      // STEP 1: Classification
       const classification = await this.classifyQuery(request);
       handlers.onMetadata({ classification, step: 'classification' });
-      handlers.onToken(`Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}%)\n`);
+      handlers.onToken(
+        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}%)\\n`
+      );
 
-      // STEP 2: Retrieve documents using shared logic with progress updates
       const retrievedDocs = await this.retrieveDocuments(
         request.message,
         classification,
-        (message) => handlers.onToken(message) // Pass progress callback
+        (message) => handlers.onToken(message)
       );
 
       handlers.onMetadata({ sources: retrievedDocs.length, step: 'retrieval' });
-      handlers.onToken(`Found ${retrievedDocs.length} results\n`);
+      handlers.onToken(`Found ${retrievedDocs.length} results\\n`);
 
       handlers.onComplete({
         answer: '',
@@ -203,6 +345,10 @@ export class TutorChain {
         classification,
         cached: false,
         confidence: classification.confidence,
+        metadata: {
+          stage: 'ready_for_reranking',
+          message: 'Click "Rerank Documents" to rank by relevance',
+        },
       });
 
       this.logger.info('[TutorChain-Stream] Complete');
@@ -212,6 +358,9 @@ export class TutorChain {
     }
   }
 
+  /**
+   * Private classification logic
+   */
   private async classifyQuery(request: ChatRequest): Promise<Classification> {
     if (request.subject && request.level) {
       return {
@@ -220,6 +369,7 @@ export class TutorChain {
         confidence: 1.0,
       };
     }
+
     return await this.classifier.classify(request.message);
   }
 }

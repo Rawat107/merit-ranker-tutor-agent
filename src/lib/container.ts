@@ -13,7 +13,7 @@ export function createContainer(logger: pino.Logger) {
   const retriever = new AWSKnowledgeBaseRetriever(logger);
   const reranker = new Reranker(logger);
 
-  const tutorChain = new TutorChain(classifier, retriever, modelSelector, logger);
+  const tutorChain = new TutorChain(classifier, retriever, modelSelector, reranker, logger);
 
    return {
     getTutorChain: () => tutorChain,

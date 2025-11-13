@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Tutor</title>
+    <title>AI Tutor - Classification & Evaluation Pipeline</title>
     <style>
       * {
         margin: 0;
@@ -13,108 +13,98 @@
 
       body {
         font-family:
-          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        background: #f5f5f5;
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
         padding: 20px;
       }
 
       .container {
-        max-width: 600px;
+        max-width: 1000px;
         margin: 0 auto;
         background: white;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
       }
 
-      h1 {
-        font-size: 24px;
-        margin-bottom: 20px;
-        color: #333;
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px 30px;
+        text-align: center;
       }
 
-      .form-group {
-        margin-bottom: 15px;
+      .header h1 {
+        font-size: 32px;
+        margin-bottom: 10px;
+        font-weight: 700;
       }
 
-      label {
-        display: block;
-        margin-bottom: 5px;
+      .header p {
+        font-size: 14px;
+        opacity: 0.9;
+      }
+
+      .content {
+        padding: 30px;
+      }
+
+      .section {
+        margin-bottom: 30px;
+      }
+
+      .section-title {
+        font-size: 16px;
         font-weight: 600;
-        color: #555;
-        font-size: 14px;
+        color: #333;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
-      input,
-      textarea,
-      select {
-        width: 100%;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 14px;
-        font-family: inherit;
+      .section-title::before {
+        content: "";
+        width: 4px;
+        height: 20px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 2px;
       }
 
       textarea {
-        min-height: 60px;
-        resize: vertical;
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: inherit;
+        min-height: 100px;
+        transition: all 0.3s;
       }
 
-      input:focus,
-      textarea:focus,
-      select:focus {
+      textarea:focus {
         outline: none;
         border-color: #667eea;
-        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
       }
 
       .button-group {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
         gap: 10px;
-        margin-top: 20px;
+        margin-top: 15px;
+        flex-wrap: wrap;
       }
 
       button {
-        padding: 10px;
+        padding: 12px 24px;
         border: none;
-        border-radius: 4px;
+        border-radius: 8px;
         font-size: 14px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.2s;
-      }
-
-      .btn-classify {
-        background: #667eea;
-        color: white;
-      }
-
-      .btn-classify:hover {
-        background: #5568d3;
-      }
-
-      .btn-search {
-        background: #764ba2;
-        color: white;
-      }
-
-      .btn-search:hover {
-        background: #654a91;
-      }
-
-      .btn-rerank {
-        background: #f093fb;
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        color: white;
-        width: 100%;
-        margin-top: 15px;
-      }
-
-      .btn-rerank:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(245, 87, 108, 0.3);
+        transition: all 0.3s;
       }
 
       button:disabled {
@@ -122,483 +112,932 @@
         cursor: not-allowed;
       }
 
-      .loading {
-        display: none;
-        text-align: center;
-        margin: 20px 0;
-        color: #667eea;
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        flex: 1;
+        min-width: 150px;
       }
 
-      .loading.active {
+      .btn-primary:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+      }
+
+      .btn-secondary {
+        background: #f0f0f0;
+        color: #333;
+        flex: 1;
+        min-width: 150px;
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: #e0e0e0;
+      }
+
+      .btn-rerank {
+        background: linear-gradient(135deg, #f59e0b, #f97316);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-rerank.show {
         display: block;
       }
 
-      .classification {
-        background: #f0f4ff;
-        border: 1px solid #ddd;
-        padding: 15px;
+      .btn-rerank:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(249, 115, 22, 0.3);
+      }
+
+      .btn-evaluate {
+        background: linear-gradient(135deg, #f093fb, #f5576c);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-evaluate.show {
+        display: block;
+      }
+
+      .btn-evaluate:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(245, 87, 108, 0.3);
+      }
+
+      .btn-stream {
+        background: linear-gradient(135deg, #06d6a0, #118ab2);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-stream.show {
+        display: block;
+      }
+
+      .btn-stream:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(6, 214, 160, 0.3);
+      }
+
+      .streaming-indicator {
+        background: linear-gradient(90deg, #06d6a0, #118ab2);
+        color: white;
+        padding: 8px 12px;
         border-radius: 4px;
-        margin: 20px 0;
+        font-size: 12px;
+        font-weight: 600;
         display: none;
+        margin-bottom: 15px;
       }
 
-      .classification.active {
+      .streaming-indicator.show {
         display: block;
       }
 
-      .classification h3 {
+      .streaming-indicator::before {
+        content: "🌊 ";
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        50%,
+        100% {
+          opacity: 1;
+        }
+        25%,
+        75% {
+          opacity: 0.5;
+        }
+      }
+
+      .box {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 20px;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .box.show {
+        display: block;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+
+      .item {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #667eea;
+      }
+
+      .item label {
+        display: block;
+        font-size: 11px;
+        color: #999;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+      }
+
+      .item value {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      .confidence-bar {
+        background: #e9ecef;
+        height: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+
+      .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        transition: width 0.3s;
+      }
+
+      .intent-info {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #f5576c;
+        margin-top: 10px;
+      }
+
+      .intent-info label {
+        display: block;
+        font-size: 11px;
+        color: #999;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+      }
+
+      .intent-info value {
+        display: block;
+        font-size: 13px;
+        color: #333;
+        margin-bottom: 8px;
+      }
+
+      .document-item {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #667eea;
         margin-bottom: 10px;
-        color: #667eea;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+
+      .document-item:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+
+      .document-item.selected {
+        background: #f0f0f0;
+        border-left-color: #f5576c;
+      }
+
+      .document-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 5px;
+      }
+
+      .document-snippet {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+        max-height: 60px;
+        overflow: hidden;
+      }
+
+      .document-score {
+        display: inline-block;
+        background: #e9ecef;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+
+      .answer-content {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        line-height: 1.8;
+        color: #333;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 600px;
+        overflow-y: auto;
         font-size: 14px;
       }
 
-      .classification-row {
+      .model-info {
         display: grid;
         grid-template-columns: 1fr 1fr 1fr;
         gap: 10px;
-        font-size: 13px;
-      }
-
-      .classification-item {
-        background: white;
-        padding: 8px;
-        border-radius: 3px;
-        text-align: center;
-      }
-
-      .classification-item label {
-        margin: 0;
-        color: #999;
-        font-weight: normal;
-      }
-
-      .classification-item value {
-        display: block;
-        margin-top: 3px;
-        font-weight: 600;
-        color: #333;
-      }
-
-      .sources {
-        margin-top: 20px;
-        display: none;
-      }
-
-      .sources.active {
-        display: block;
-      }
-
-      .sources h3 {
-        margin-bottom: 10px;
-        color: #333;
-        font-size: 16px;
-      }
-
-      .source-item {
-        background: #f9f9f9;
-        border: 1px solid #eee;
-        padding: 12px;
-        margin-bottom: 10px;
-        border-radius: 4px;
-      }
-
-      .source-title {
-        font-weight: 600;
-        color: #667eea;
-        margin-bottom: 5px;
-        font-size: 14px;
-      }
-
-      .source-text {
-        font-size: 13px;
-        color: #666;
-        line-height: 1.4;
-        margin-bottom: 5px;
-      }
-
-      .source-meta {
-        font-size: 12px;
-        color: #999;
-      }
-
-      .source-url {
-        color: #667eea;
-        text-decoration: none;
-        margin-left: 10px;
-      }
-
-      .source-url:hover {
-        text-decoration: underline;
-      }
-
-      /* Reranker Styles */
-      .rerank-section {
-        margin-top: 30px;
-        padding: 20px;
-        background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%);
-        border-radius: 8px;
-        border-left: 4px solid #f5576c;
-        display: none;
-      }
-
-      .rerank-section.active {
-        display: block;
-      }
-
-      .rerank-section h3 {
-        margin-bottom: 15px;
-        color: #f5576c;
-        font-size: 16px;
-      }
-
-      .rerank-results {
         margin-top: 15px;
+        font-size: 12px;
       }
 
-      .rerank-item {
+      .model-info-item {
         background: white;
-        border: 1px solid #e0e0e0;
-        padding: 15px;
-        margin-bottom: 12px;
+        padding: 10px;
         border-radius: 6px;
-        transition: all 0.2s;
+        border-left: 2px solid #667eea;
       }
 
-      .rerank-item:hover {
-        box-shadow: 0 4px 12px rgba(245, 87, 108, 0.1);
-        transform: translateY(-2px);
+      .model-info-label {
+        color: #999;
+        text-transform: uppercase;
+        margin-bottom: 3px;
       }
 
-      .rerank-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-      }
-
-      .rerank-title {
+      .model-info-value {
         font-weight: 600;
         color: #333;
-        flex: 1;
-        font-size: 14px;
       }
 
-      .score-comparison {
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .loading.show {
+        display: block;
+      }
+
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 15px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .error-box {
+        background: #fee;
+        border: 1px solid #fcc;
+        border-radius: 8px;
+        padding: 15px;
+        color: #c33;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .error-box.show {
+        display: block;
+      }
+
+      .success-box {
+        background: #efe;
+        border: 1px solid #cfc;
+        border-radius: 8px;
+        padding: 15px;
+        color: #3c3;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .success-box.show {
+        display: block;
+      }
+
+      .step-indicator {
         display: flex;
         gap: 10px;
+        margin-bottom: 20px;
         font-size: 12px;
       }
 
-      .score-badge {
-        padding: 4px 10px;
-        border-radius: 4px;
+      .step {
+        flex: 1;
+        padding: 8px;
+        text-align: center;
+        border-radius: 6px;
+        background: #e9ecef;
+        color: #666;
         font-weight: 600;
       }
 
-      .score-original {
-        background: #f0f0f0;
-        color: #666;
-      }
-
-      .score-reranked {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      .step.active {
+        background: linear-gradient(135deg, #667eea, #764ba2);
         color: white;
       }
 
-      .rerank-reason {
-        color: #666;
-        font-size: 12px;
-        margin-top: 8px;
-        font-style: italic;
-        padding: 8px;
-        background: #f9f9f9;
-        border-radius: 4px;
+      .step.completed {
+        background: #10b981;
+        color: white;
       }
 
-      .rerank-text {
-        color: #555;
-        font-size: 13px;
-        line-height: 1.5;
-        margin-top: 8px;
-      }
-
-      .error {
-        background: #fee;
-        border: 1px solid #fcc;
-        color: #c33;
-        padding: 12px;
-        border-radius: 4px;
-        margin: 20px 0;
-        display: none;
-        font-size: 14px;
-      }
-
-      .error.active {
-        display: block;
+      @media (max-width: 600px) {
+        .header h1 {
+          font-size: 24px;
+        }
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+        .button-group {
+          flex-direction: column;
+        }
+        .model-info {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <div class="container">
-      <h1>🎓 AI Tutor</h1>
+      <div class="header">
+        <h1>🤖 AI Tutor Pipeline</h1>
+        <p>Classification → Retrieval → Reranking → Evaluation</p>
+      </div>
 
-      <form id="tutorForm">
-        <div class="form-group">
-          <label>Your Question</label>
+      <div class="content">
+        <!-- Step Indicator -->
+        <div class="step-indicator">
+          <div class="step" id="step1">1. Input</div>
+          <div class="step" id="step2">2. Classify & Retrieve</div>
+          <div class="step" id="step3">3. Rerank</div>
+          <div class="step" id="step4">4. Evaluate</div>
+        </div>
+
+        <!-- Error/Success Messages -->
+        <div id="errorBox" class="error-box"></div>
+        <div id="successBox" class="success-box"></div>
+
+        <!-- Input Section -->
+        <div class="section">
+          <div class="section-title">Your Question</div>
           <textarea
-            id="message"
-            placeholder="Ask a question..."
-            required
+            id="queryInput"
+            placeholder="Ask your question... e.g., 'How do I solve a quadratic equation?'"
           ></textarea>
+          <div class="button-group">
+            <button
+              class="btn-primary"
+              id="classifyBtn"
+              onclick="classifyQuery()"
+            >
+              📝 Classify & Retrieve
+            </button>
+            <button class="btn-secondary" id="clearBtn" onclick="clearAll()">
+              Clear
+            </button>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label>Subject (Optional - Leave empty for auto-classify)</label>
-          <select id="subject">
-            <option value="">Auto-Classify</option>
-            <option value="current_affairs">Current Affairs</option>
-            <option value="math">Math</option>
-            <option value="science">Science</option>
-            <option value="history">History</option>
-            <option value="reasoning">Reasoning</option>
-            <option value="literature">Literature</option>
-            <option value="english_grammer">English Grammar</option>
-          </select>
+        <!-- Loading -->
+        <div id="loading" class="loading">
+          <div class="spinner"></div>
+          <p id="loadingText">Processing...</p>
         </div>
 
-        <div class="button-group">
-          <button type="button" class="btn-classify" id="classifyBtn">
-            🔍 Classify
+        <!-- Classification Results -->
+        <div id="classificationBox" class="box">
+          <div class="section-title">Classification Results</div>
+          <div class="grid-2">
+            <div class="item">
+              <label>Subject</label>
+              <value id="classSubject">-</value>
+            </div>
+            <div class="item">
+              <label>Level</label>
+              <value id="classLevel">-</value>
+            </div>
+            <div class="item">
+              <label>Confidence</label>
+              <value id="classConfidence">-</value>
+              <div class="confidence-bar">
+                <div id="confidenceFill" class="confidence-fill"></div>
+              </div>
+            </div>
+            <div class="item">
+              <label>Intent</label>
+              <value id="classIntent">-</value>
+            </div>
+          </div>
+
+          <div class="intent-info">
+            <label>Expected Response Format</label>
+            <value id="expectedFormat">-</value>
+          </div>
+        </div>
+
+        <!-- Retrieved Documents -->
+        <div id="documentsBox" class="box">
+          <div class="section-title">Retrieved Documents (Click to select)</div>
+          <div id="documentsList"></div>
+        </div>
+
+        <!-- Rerank Button -->
+        <div class="button-group" style="margin-bottom: 20px">
+          <button class="btn-rerank" id="rerankBtn" onclick="rerankDocuments()">
+            📊 Rerank Documents
           </button>
-          <button type="submit" class="btn-search">🔎 Search</button>
         </div>
-      </form>
 
-      <div class="loading" id="loading">⏳ Loading...</div>
+        <!-- Reranked Results -->
+        <div id="rerankedBox" class="box">
+          <div class="section-title">Reranked Results</div>
+          <div id="rerankedList"></div>
+        </div>
 
-      <div class="error" id="error"></div>
+        <!-- Evaluate Buttons -->
+        <div class="button-group" style="margin-bottom: 20px">
+          <button
+            class="btn-evaluate"
+            id="evaluateBtn"
+            onclick="evaluatePrompt()"
+          >
+            ⚡ Evaluate & Generate Response
+          </button>
+          <button
+            class="btn-stream"
+            id="streamBtn"
+            onclick="evaluateStreamingPrompt()"
+          >
+            🌊 Stream Response
+          </button>
+        </div>
 
-      <div class="classification" id="classification">
-        <h3>📋 Classification Result</h3>
-        <div class="classification-row">
-          <div class="classification-item">
-            <label>Subject</label>
-            <value id="classSubject">-</value>
+        <!-- Final Answer -->
+        <div id="answerBox" class="box">
+          <div class="section-title">
+            Final Response (Intent: <span id="answerIntent">-</span>)
           </div>
-          <div class="classification-item">
-            <label>Level</label>
-            <value id="classLevel">-</value>
+          <div id="streamingIndicator" class="streaming-indicator">
+            Streaming response...
           </div>
-          <div class="classification-item">
-            <label>Confidence</label>
-            <value id="classConfidence">-</value>
+          <div class="answer-content" id="answerContent">-</div>
+          <div class="model-info">
+            <div class="model-info-item">
+              <div class="model-info-label">Model</div>
+              <div class="model-info-value" id="modelUsed">-</div>
+            </div>
+            <div class="model-info-item">
+              <div class="model-info-label">Model Tier</div>
+              <div class="model-info-value" id="modelLevel">-</div>
+            </div>
+            <div class="model-info-item">
+              <div class="model-info-label">Latency</div>
+              <div class="model-info-value" id="latency">-</div>
+            </div>
           </div>
         </div>
-      </div>
-
-      <div class="sources" id="sources">
-        <h3>📚 Search Results</h3>
-        <div id="sourcesList"></div>
-      </div>
-
-      <!-- Rerank Section -->
-      <div class="rerank-section" id="rerankSection">
-        <h3>⚡ Reranked Results</h3>
-        <button type="button" class="btn-rerank" id="rerankBtn">
-          🔄 Rerank Results
-        </button>
-        <div id="rerankResults" class="rerank-results"></div>
       </div>
     </div>
 
     <script>
-      const API_URL = "http://localhost:3000";
-      let currentResults = [];
-      let currentQuery = "";
+      let currentClassification = null;
+      let currentDocuments = [];
+      let rerankedDocuments = [];
+      let selectedDocument = null;
 
-      // Classify button
-      document
-        .getElementById("classifyBtn")
-        .addEventListener("click", async () => {
-          const msg = document.getElementById("message").value.trim();
-          if (!msg) return alert("Enter a question");
+      // Update step indicator
+      function updateStep(stepNum) {
+        for (let i = 1; i <= 4; i++) {
+          const step = document.getElementById(`step${i}`);
+          if (i < stepNum) step.className = "step completed";
+          else if (i === stepNum) step.className = "step active";
+          else step.className = "step";
+        }
+      }
 
-          try {
-            showLoading();
-            const res = await fetch(`${API_URL}/classify`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: msg }),
-            });
-            const data = await res.json();
-            const c = data.classification;
+      function showLoading(show, text = "Processing...") {
+        const loading = document.getElementById("loading");
+        document.getElementById("loadingText").textContent = text;
+        loading.classList.toggle("show", show);
+      }
 
-            document.getElementById("subject").value = c.subject;
-            document.getElementById("classSubject").textContent = c.subject;
-            document.getElementById("classLevel").textContent = c.level;
-            document.getElementById("classConfidence").textContent =
-              (c.confidence * 100).toFixed(0) + "%";
-            document.getElementById("classification").classList.add("active");
-            hideError();
-          } catch (err) {
-            showError(err.message);
-          } finally {
-            hideLoading();
-          }
+      function showError(message) {
+        const errorBox = document.getElementById("errorBox");
+        errorBox.textContent = `❌ ${message}`;
+        errorBox.classList.add("show");
+        setTimeout(() => errorBox.classList.remove("show"), 5000);
+      }
+
+      function showSuccess(message) {
+        const successBox = document.getElementById("successBox");
+        successBox.textContent = `✅ ${message}`;
+        successBox.classList.add("show");
+        setTimeout(() => successBox.classList.remove("show"), 3000);
+      }
+
+      // Classify and retrieve
+      async function classifyQuery() {
+        const query = document.getElementById("queryInput").value.trim();
+        if (!query) {
+          showError("Please enter a question!");
+          return;
+        }
+
+        showLoading(true, "📝 Classifying & Retrieving...");
+        updateStep(2);
+
+        try {
+          const response = await fetch("http://localhost:3000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: query }),
+          });
+
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const data = await response.json();
+          currentClassification = data.classification;
+          currentDocuments = data.sources || [];
+
+          updateClassificationUI(data.classification);
+          updateDocumentsUI(data.sources || []);
+
+          document.getElementById("classificationBox").classList.add("show");
+          document.getElementById("documentsBox").classList.add("show");
+          document.getElementById("rerankBtn").classList.add("show");
+
+          showSuccess(`Found ${currentDocuments.length} documents`);
+        } catch (error) {
+          showError(`Classification failed: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      function updateClassificationUI(classification) {
+        document.getElementById("classSubject").textContent =
+          classification.subject || "-";
+        document.getElementById("classLevel").textContent =
+          classification.level || "-";
+        document.getElementById("classIntent").textContent =
+          classification.intent || "factual_retrieval";
+
+        const confidence = (classification.confidence * 100).toFixed(1);
+        document.getElementById("classConfidence").textContent =
+          `${confidence}%`;
+        document.getElementById("confidenceFill").style.width =
+          `${confidence}%`;
+
+        document.getElementById("expectedFormat").textContent =
+          classification.expectedFormat || "Direct answer with explanation";
+      }
+
+      function updateDocumentsUI(documents) {
+        const list = document.getElementById("documentsList");
+        list.innerHTML = "";
+
+        if (!documents.length) {
+          list.innerHTML = '<p style="color: #999;">No documents retrieved</p>';
+          return;
+        }
+
+        documents.forEach((doc, idx) => {
+          const el = document.createElement("div");
+          el.className = "document-item";
+          if (idx === 0) el.classList.add("selected");
+
+          el.onclick = () => {
+            document
+              .querySelectorAll(".document-item")
+              .forEach((e) => e.classList.remove("selected"));
+            el.classList.add("selected");
+            selectedDocument = doc;
+          };
+
+          el.innerHTML = `
+          <div class="document-title">${doc.id || `Document ${idx + 1}`}</div>
+          <div class="document-snippet">${doc.text.substring(0, 100)}...</div>
+          <span class="document-score">Score: ${((doc.score || 0.7) * 100).toFixed(1)}%</span>
+        `;
+
+          list.appendChild(el);
+          if (idx === 0) selectedDocument = doc;
         });
+      }
 
-      // Search form
-      document
-        .getElementById("tutorForm")
-        .addEventListener("submit", async (e) => {
-          e.preventDefault();
-          const msg = document.getElementById("message").value.trim();
-          const subject = document.getElementById("subject").value;
+      // Rerank documents
+      async function rerankDocuments() {
+        if (!currentDocuments.length) {
+          showError("No documents to rerank!");
+          return;
+        }
 
-          if (!msg) return alert("Enter a question");
+        showLoading(true, "📊 Reranking documents...");
+        updateStep(3);
 
-          try {
-            showLoading();
-            const body = { message: msg };
-            if (subject) body.subject = subject;
+        try {
+          const query = document.getElementById("queryInput").value;
+          const response = await fetch("http://localhost:3000/rerank", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              documents: currentDocuments,
+              topK: 3,
+            }),
+          });
 
-            const res = await fetch(`${API_URL}/chat`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            const data = await res.json();
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-            if (data.classification) {
-              const c = data.classification;
-              document.getElementById("classSubject").textContent = c.subject;
-              document.getElementById("classLevel").textContent = c.level;
-              document.getElementById("classConfidence").textContent =
-                (c.confidence * 100).toFixed(0) + "%";
-              document.getElementById("classification").classList.add("active");
-            }
+          const data = await response.json();
+          rerankedDocuments = data.results || [];
 
-            if (data.sources && data.sources.length > 0) {
-              const html = data.sources
-                .map(
-                  (s, i) => `
-                  <div class="source-item">
-                      <div class="source-title">${i + 1}. ${s.metadata?.title || "Result"}</div>
-                      <div class="source-text">${s.text}</div>
-                      <div class="source-meta">
-                          Source: ${s.metadata?.source || "unknown"}
-                          ${s.metadata?.url ? `<a href="${s.metadata.url}" target="_blank" class="source-url">View</a>` : ""}
-                      </div>
-                  </div>
-              `
-                )
-                .join("");
-              document.getElementById("sourcesList").innerHTML = html;
-              document.getElementById("sources").classList.add("active");
+          updateRerankedUI(data.results);
+          document.getElementById("rerankedBox").classList.add("show");
+          document.getElementById("evaluateBtn").classList.add("show");
+          document.getElementById("streamBtn").classList.add("show");
+          document.getElementById("rerankBtn").classList.remove("show");
 
-              // Save for reranking
-              currentResults = data.sources;
-              currentQuery = msg;
-              document.getElementById("rerankSection").classList.add("active");
-              document.getElementById("rerankResults").innerHTML = ""; // Clear previous rerank
-            } else {
-              showError("No results found");
-            }
+          showSuccess(
+            'Documents reranked! Click "Evaluate" to generate response'
+          );
+        } catch (error) {
+          showError(`Reranking failed: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
+      }
 
-            hideError();
-          } catch (err) {
-            showError(err.message);
-          } finally {
-            hideLoading();
-          }
+      function updateRerankedUI(results) {
+        const list = document.getElementById("rerankedList");
+        list.innerHTML = "";
+
+        results.forEach((result, idx) => {
+          const el = document.createElement("div");
+          el.className = "document-item";
+          if (idx === 0) el.classList.add("selected");
+
+          el.onclick = () => {
+            document
+              .querySelectorAll("#rerankedList .document-item")
+              .forEach((e) => e.classList.remove("selected"));
+            el.classList.add("selected");
+            selectedDocument = result.metadata || result;
+          };
+
+          const rankChange = idx === 0 ? "(📈 Top Result!)" : "";
+
+          el.innerHTML = `
+          <div class="document-title">#${idx + 1} ${result.id} ${rankChange}</div>
+          <div class="document-snippet">${result.text.substring(0, 100)}...</div>
+          <span class="document-score">Reranked: ${(result.reranked_score * 100).toFixed(1)}% | ${result.reason}</span>
+        `;
+
+          list.appendChild(el);
+          if (idx === 0) selectedDocument = result;
         });
+      }
 
-      // Rerank button
-      document
-        .getElementById("rerankBtn")
-        .addEventListener("click", async () => {
-          if (currentResults.length === 0) {
-            alert("No results to rerank");
-            return;
-          }
+      // Streaming evaluate and generate response
+      async function evaluateStreamingPrompt() {
+        if (!currentClassification || !rerankedDocuments.length) {
+          showError("Please rerank documents first!");
+          return;
+        }
 
-          const rerankBtn = document.getElementById("rerankBtn");
-          const rerankResults = document.getElementById("rerankResults");
+        showLoading(true, "🌊 Starting streaming evaluation...");
+        updateStep(4);
 
-          try {
-            rerankBtn.disabled = true;
-            rerankBtn.textContent = "⏳ Reranking...";
+        try {
+          // Use top reranked document
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
 
-            const response = await fetch(`${API_URL}/rerank`, {
+          // Show streaming indicator
+          document.getElementById("answerBox").classList.add("show");
+          document.getElementById("streamingIndicator").classList.add("show");
+          const intent = currentClassification.intent || "factual_retrieval";
+          document.getElementById("answerIntent").textContent = intent;
+
+          // Clear previous content
+          const answerContent = document.getElementById("answerContent");
+          answerContent.textContent = "";
+
+          // Create EventSource for Server-Sent Events
+          const eventSource = new EventSource(
+            `http://localhost:3000/evaluate/stream`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          // Note: EventSource doesn't support POST with body directly
+          // We need to use fetch with streaming instead
+          const response = await fetch(
+            "http://localhost:3000/evaluate/stream",
+            {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                documents: currentResults,
-                query: currentQuery,
-                topK: 3,
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
               }),
-            });
-
-            if (!response.ok) {
-              const errData = await response.json();
-              throw new Error(errData.message || "Reranking failed");
             }
+          );
 
-            const data = await response.json();
-            console.log("✅ Reranked:", data);
-
-            // Display reranked results
-            rerankResults.innerHTML = data.results
-              .map(
-                (r, i) => `
-              <div class="rerank-item">
-                <div class="rerank-header">
-                  <div class="rerank-title">#${i + 1} ${r.metadata?.title || "Result"}</div>
-                  <div class="score-comparison">
-                    <span class="score-badge score-original">
-                      ${(r.original_score * 100).toFixed(0)}%
-                    </span>
-                    <span class="score-badge score-reranked">
-                      ${(r.reranked_score * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-                <div class="rerank-text">${r.text.substring(0, 300)}...</div>
-                <div class="rerank-reason"> ${r.reason}</div>
-              </div>
-            `
-              )
-              .join("");
-          } catch (err) {
-            console.error("❌ Reranking error:", err);
-            alert("Reranking failed: " + err.message);
-          } finally {
-            rerankBtn.textContent = "🔄 Rerank Results";
-            rerankBtn.disabled = false;
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
           }
-        });
 
-      function showLoading() {
-        document.getElementById("loading").classList.add("active");
-        document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          showLoading(false);
+
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // Keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.type === "token") {
+                    answerContent.textContent += data.content;
+                    answerContent.scrollTop = answerContent.scrollHeight;
+                  } else if (data.type === "metadata") {
+                    console.log("Metadata:", data.content);
+                  } else if (data.type === "complete") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+
+                    if (data.content.success) {
+                      document.getElementById("modelUsed").textContent =
+                        data.content.data.modelUsed;
+                      document.getElementById("modelLevel").textContent =
+                        data.content.data.levelUsed;
+                      document.getElementById("latency").textContent =
+                        `${data.content.data.latency}ms`;
+
+                      showSuccess("Streaming response completed!");
+                    } else {
+                      showError(
+                        data.content.message || "Streaming evaluation failed"
+                      );
+                    }
+                  } else if (data.type === "error") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+                    showError(`Streaming error: ${data.content.message}`);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE data:", line);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          document
+            .getElementById("streamingIndicator")
+            .classList.remove("show");
+          showError(`Streaming evaluation error: ${error.message}`);
+          showLoading(false);
+        }
       }
 
-      function hideLoading() {
-        document.getElementById("loading").classList.remove("active");
-        document
-          .querySelectorAll("button")
-          .forEach((b) => (b.disabled = false));
+      // Evaluate and generate response
+      async function evaluatePrompt() {
+        if (!currentClassification || !rerankedDocuments.length) {
+          showError("Please rerank documents first!");
+          return;
+        }
+
+        showLoading(true, "⚡ Evaluating & Generating response...");
+        updateStep(4);
+
+        try {
+          // Use top reranked document
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          const response = await fetch("http://localhost:3000/evaluate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userQuery: document.getElementById("queryInput").value,
+              classification: currentClassification,
+              documents: docsForEval,
+              userSubscription: "free",
+            }),
+          });
+
+          if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.message || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          if (data.success) {
+            const intent = currentClassification.intent || "factual_retrieval";
+            document.getElementById("answerIntent").textContent = intent;
+            document.getElementById("answerContent").textContent =
+              data.data.answer;
+            document.getElementById("modelUsed").textContent =
+              data.data.modelUsed;
+            document.getElementById("modelLevel").textContent =
+              data.data.levelUsed;
+            document.getElementById("latency").textContent =
+              `${data.data.latency}ms`;
+
+            document.getElementById("answerBox").classList.add("show");
+            showSuccess("Response generated successfully!");
+          } else {
+            showError(data.message || "Evaluation failed");
+          }
+        } catch (error) {
+          showError(`Evaluation error: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
       }
 
-      function showError(msg) {
-        const err = document.getElementById("error");
-        err.textContent = msg;
-        err.classList.add("active");
+      function clearAll() {
+        document.getElementById("queryInput").value = "";
+        document.getElementById("classificationBox").classList.remove("show");
+        document.getElementById("documentsBox").classList.remove("show");
+        document.getElementById("rerankBtn").classList.remove("show");
+        document.getElementById("rerankedBox").classList.remove("show");
+        document.getElementById("evaluateBtn").classList.remove("show");
+        document.getElementById("streamBtn").classList.remove("show");
+        document.getElementById("answerBox").classList.remove("show");
+        document.getElementById("streamingIndicator").classList.remove("show");
+        currentClassification = null;
+        currentDocuments = [];
+        rerankedDocuments = [];
+        updateStep(1);
       }
 
-      function hideError() {
-        document.getElementById("error").classList.remove("active");
-      }
+      // Initialize
+      updateStep(1);
+      console.log("AI Tutor Pipeline loaded");
     </script>
   </body>
 </html>
