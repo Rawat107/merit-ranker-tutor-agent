@@ -38,7 +38,85 @@ export class TutorChain {
   }
 
   /**
-   * Main execution method
+   * Core retrieval logic - shared by both streaming and non-streaming
+   */
+  private async retrieveDocuments(
+    query: string,
+    classification: Classification,
+    onProgress?: (message: string) => void
+  ): Promise<Document[]> {
+    const isAcademicSubject = this.isAcademicSubject(classification.subject);
+    const isCurrentAffairs = classification.subject === 'current_affairs' || 
+                             classification.subject === 'general_knowledge';
+
+    let retrievedDocs: Document[] = [];
+
+    if (isCurrentAffairs) {
+      // ROUTE 1: Web Search for current affairs
+      this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
+      onProgress?.('Searching web...\n');
+      retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+    } else if (isAcademicSubject) {
+      // ROUTE 2: Knowledge Base for academic subjects with fallback
+      this.logger.info('[TutorChain] Route: Knowledge Base (Academic)');
+      onProgress?.('Searching knowledge base...\n');
+      
+      retrievedDocs = await this.retriever.getRelevantDocuments(query, {
+        subject: classification.subject,
+        level: classification.level,
+        k: 5,
+      });
+
+      // Check if fallback needed
+      const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined 
+        ? retrievedDocs[0].score 
+        : 0;
+      const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
+      
+      if (shouldFallback) {
+        const reason = retrievedDocs.length === 0 
+          ? 'KB empty' 
+          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+        
+        this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
+        onProgress?.(`${retrievedDocs.length === 0 ? 'No KB results' : `Low relevance (${(topScore * 100).toFixed(1)}%)`}, trying web search...\n`);
+        
+        retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+      }
+    } else {
+      // ROUTE 3: Try KB for general subjects with fallback
+      this.logger.info('[TutorChain] Route: Knowledge Base (General)');
+      onProgress?.('Searching knowledge base...\n');
+      
+      retrievedDocs = await this.retriever.getRelevantDocuments(query, {
+        subject: classification.subject,
+        level: classification.level,
+        k: 5,
+      });
+
+      // Check if fallback needed
+      const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined 
+        ? retrievedDocs[0].score 
+        : 0;
+      const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
+      
+      if (shouldFallback) {
+        const reason = retrievedDocs.length === 0 
+          ? 'KB empty' 
+          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+        
+        this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
+        onProgress?.(`${retrievedDocs.length === 0 ? 'No KB results' : `Low relevance (${(topScore * 100).toFixed(1)}%)`}, trying web search...\n`);
+        
+        retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+      }
+    }
+
+    return retrievedDocs;
+  }
+
+  /**
+   * Main execution method (non-streaming)
    */
   private async execute(request: ChatRequest): Promise<AITutorResponse> {
     this.logger.info(
@@ -54,65 +132,11 @@ export class TutorChain {
         '[TutorChain] Classification: ' + classification.subject
       );
 
-      // STEP 2: Routing Logic
-      let retrievedDocs: Document[] = [];
-
-      // Check subject - KB FIRST for academic subjects
-      const isAcademicSubject = this.isAcademicSubject(classification.subject);
-      const isCurrentAffairs = classification.subject === 'current_affairs' || 
-                               classification.subject === 'general_knowledge';
-
-      if (isCurrentAffairs) {
-        // ROUTE 1: Web Search for current affairs
-        this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-        retrievedDocs = await webSearchTool(
-          request.message,
-          classification.subject,
-          this.logger
-        );
-      } else if (isAcademicSubject) {
-        // ROUTE 2: Knowledge Base for academic subjects (FIRST)
-        this.logger.info('[TutorChain] Route: Knowledge Base (Academic)');
-        retrievedDocs = await this.retriever.getRelevantDocuments(
-          request.message,
-          {
-            subject: classification.subject,
-            level: classification.level,
-            k: 5,
-          }
-        );
-
-        // Fallback to web search if KB has no results
-        if (retrievedDocs.length === 0) {
-          this.logger.warn('[TutorChain] KB empty, falling back to web search');
-          retrievedDocs = await webSearchTool(
-            request.message,
-            classification.subject,
-            this.logger
-          );
-        }
-      } else {
-        // ROUTE 3: Try KB for general subjects
-        this.logger.info('[TutorChain] Route: Knowledge Base (General)');
-        retrievedDocs = await this.retriever.getRelevantDocuments(
-          request.message,
-          {
-            subject: classification.subject,
-            level: classification.level,
-            k: 5,
-          }
-        );
-
-        // Fallback to web search if no KB results
-        if (retrievedDocs.length === 0) {
-          this.logger.warn('[TutorChain] KB empty, falling back to web search');
-          retrievedDocs = await webSearchTool(
-            request.message,
-            classification.subject,
-            this.logger
-          );
-        }
-      }
+      // STEP 2: Retrieve documents using shared logic
+      const retrievedDocs = await this.retrieveDocuments(
+        request.message,
+        classification
+      );
 
       this.logger.info(
         { sourcesCount: retrievedDocs.length },
@@ -158,61 +182,17 @@ export class TutorChain {
     try {
       handlers.onToken('[AI Tutor]\n');
 
+      // STEP 1: Classification
       const classification = await this.classifyQuery(request);
       handlers.onMetadata({ classification, step: 'classification' });
       handlers.onToken(`Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}%)\n`);
 
-      let retrievedDocs: Document[] = [];
-      const isAcademicSubject = this.isAcademicSubject(classification.subject);
-      const isCurrentAffairs = classification.subject === 'current_affairs' ||
-                               classification.subject === 'general_knowledge';
-
-      if (isCurrentAffairs) {
-        handlers.onToken('Searching web...\n');
-        retrievedDocs = await webSearchTool(
-          request.message,
-          classification.subject,
-          this.logger
-        );
-      } else if (isAcademicSubject) {
-        handlers.onToken('Searching knowledge base...\n');
-        retrievedDocs = await this.retriever.getRelevantDocuments(
-          request.message,
-          {
-            subject: classification.subject,
-            level: classification.level,
-            k: 5,
-          }
-        );
-
-        if (retrievedDocs.length === 0) {
-          handlers.onToken('No KB results, trying web search...\n');
-          retrievedDocs = await webSearchTool(
-            request.message,
-            classification.subject,
-            this.logger
-          );
-        }
-      } else {
-        handlers.onToken('Searching knowledge base...\n');
-        retrievedDocs = await this.retriever.getRelevantDocuments(
-          request.message,
-          {
-            subject: classification.subject,
-            level: classification.level,
-            k: 5,
-          }
-        );
-
-        if (retrievedDocs.length === 0) {
-          handlers.onToken('No KB results, trying web search...\n');
-          retrievedDocs = await webSearchTool(
-            request.message,
-            classification.subject,
-            this.logger
-          );
-        }
-      }
+      // STEP 2: Retrieve documents using shared logic with progress updates
+      const retrievedDocs = await this.retrieveDocuments(
+        request.message,
+        classification,
+        (message) => handlers.onToken(message) // Pass progress callback
+      );
 
       handlers.onMetadata({ sources: retrievedDocs.length, step: 'retrieval' });
       handlers.onToken(`Found ${retrievedDocs.length} results\n`);
