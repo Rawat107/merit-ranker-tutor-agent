@@ -105,6 +105,155 @@ export async function createServer(): Promise<FastifyInstance> {
   });
 
   /**
+   * POST /evaluate/stream - Streaming evaluate prompt and generate final response
+   * Called when user clicks "Evaluate" button with streaming enabled
+   */
+  server.post<{
+    Body: {
+      userQuery: string;
+      classification: Classification;
+      documents: Document[];
+      userSubscription?: string;
+    };
+  }>('/evaluate/stream', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['userQuery', 'classification', 'documents'],
+        properties: {
+          userQuery: { type: 'string' },
+          classification: {
+            type: 'object',
+            properties: {
+              subject: { type: 'string' },
+              level: { type: 'string' },
+              confidence: { type: 'number' },
+              intent: { type: 'string' },
+            },
+          },
+          documents: {
+            type: 'array',
+            items: { type: 'object' },
+          },
+          userSubscription: { type: 'string' },
+        },
+      },
+    }
+  }, async (request, reply) => {
+    try {
+      const { userQuery, classification, documents, userSubscription } = request.body;
+
+      if (!userQuery || userQuery.trim() === '') {
+        reply.status(400);
+        return { error: 'userQuery is required and cannot be empty' };
+      }
+
+      if (!classification) {
+        reply.status(400);
+        return { error: 'classification is required' };
+      }
+
+      if (!Array.isArray(documents)) {
+        reply.status(400);
+        return { error: 'documents must be an array' };
+      }
+
+      server.log.info(
+        {
+          query: userQuery.substring(0, 80),
+          subject: classification.subject,
+          confidence: classification.confidence,
+          docCount: documents.length,
+        },
+        '[Evaluate Stream] 🌊 Streaming evaluation request received'
+      );
+
+      // Set up Server-Sent Events headers
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Cache-Control',
+      });
+
+      const tutorChain = container.getTutorChain();
+
+      // Start streaming evaluation
+      await tutorChain.evaluateStreaming(
+        userQuery,
+        classification,
+        documents,
+        userSubscription || 'free',
+        {
+          onToken: (token: string) => {
+            // Send token as SSE event
+            reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
+          },
+          onMetadata: (metadata: any) => {
+            // Send metadata as SSE event
+            reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
+          },
+          onComplete: (result) => {
+            // Send final result
+            reply.raw.write(`data: ${JSON.stringify({ 
+              type: 'complete', 
+              content: {
+                success: true,
+                data: {
+                  answer: result.answer,
+                  modelUsed: result.modelUsed,
+                  levelUsed: result.levelUsed,
+                  latency: result.latency,
+                  classification,
+                  sources: documents,
+                },
+              }
+            })}\n\n`);
+
+            server.log.info(
+              {
+                modelUsed: result.modelUsed,
+                levelUsed: result.levelUsed,
+                latency: result.latency,
+                answerLength: result.answer.length,
+              },
+              '[Evaluate Stream] ✅ Streaming evaluation complete'
+            );
+
+            reply.raw.end();
+          },
+          onError: (error) => {
+            server.log.error(error, '[Evaluate Stream] ❌ Streaming evaluation failed');
+            
+            reply.raw.write(`data: ${JSON.stringify({ 
+              type: 'error', 
+              content: {
+                success: false,
+                error: 'Streaming evaluation failed',
+                message: error.message,
+              }
+            })}\n\n`);
+            
+            reply.raw.end();
+          },
+        }
+      );
+    } catch (error) {
+      server.log.error(error, '[Evaluate Stream] ❌ Streaming setup failed');
+      
+      if (!reply.sent) {
+        reply.status(500);
+        return {
+          success: false,
+          error: 'Streaming setup failed',
+          message: error instanceof Error ? error.message : 'unknown error',
+        };
+      }
+    }
+  });
+
+  /**
    * POST /evaluate - Evaluate prompt and generate final response
    * Called when user clicks "Evaluate" button on frontend
    */

@@ -181,6 +181,64 @@ export class TutorChain {
   }
 
   /**
+   * STREAMING EVALUATE: Generate final response after reranking with streaming
+   * This is called when user clicks "Evaluate" button for streaming responses
+   */
+  async evaluateStreaming(
+    userQuery: string,
+    classification: Classification,
+    documents: Document[],
+    subscription: string = 'free',
+    callbacks: {
+      onToken: (token: string) => void;
+      onMetadata: (metadata: any) => void;
+      onComplete: (result: EvaluatePromptOutput) => void;
+      onError: (error: Error) => void;
+    }
+  ): Promise<void> {
+    this.logger.info(
+      {
+        query: userQuery.substring(0, 80),
+        subject: classification.subject,
+        confidence: classification.confidence,
+        docCount: documents.length,
+      },
+      '[TutorChain] Streaming evaluate step started'
+    );
+
+    try {
+      // Get top document as context
+      const topDocument = documents.length > 0 ? documents[0] : null;
+
+      this.logger.debug(
+        { hasTopDoc: !!topDocument },
+        '[TutorChain] Top document selected for streaming'
+      );
+
+      // Send initial metadata
+      callbacks.onMetadata({
+        step: 'preparation',
+        docCount: documents.length,
+        classification,
+      });
+
+      // Call EvaluatePrompt with streaming
+      const evaluateInput: EvaluatePromptInput = {
+        userQuery,
+        classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription,
+      };
+
+      await this.evaluatePrompt.evaluateStreaming(evaluateInput, callbacks);
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Streaming evaluate failed');
+      callbacks.onError(error as Error);
+    }
+  }
+
+  /**
    * EVALUATE: Generate final response after reranking
    * This is called when user clicks "Evaluate" button
    */

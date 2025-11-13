@@ -40,6 +40,147 @@ export class EvaluatePrompt {
   }
 
   /**
+   * Streaming evaluation method
+   */
+  async evaluateStreaming(
+    input: EvaluatePromptInput,
+    callbacks: {
+      onToken: (token: string) => void;
+      onMetadata: (metadata: any) => void;
+      onComplete: (result: EvaluatePromptOutput) => void;
+      onError: (error: Error) => void;
+    }
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    this.logger.info(
+      {
+        query: input.userQuery.substring(0, 80),
+        subject: input.classification.subject,
+        confidence: input.classification.confidence,
+        intent: (input.classification as any).intent,
+      },
+      '[EvaluatePrompt] Starting streaming evaluation'
+    );
+
+    try {
+      // STEP 1: Decide which model tier to use based on confidence
+      const modelTier = this.selectModelTier(input.classification);
+
+      this.logger.debug(
+        {
+          confidence: input.classification.confidence,
+          tier: modelTier,
+          subject: input.classification.subject,
+          intent: (input.classification as any).intent,
+        },
+        '[EvaluatePrompt] Model tier selected for streaming'
+      );
+
+      // Send metadata about model selection
+      callbacks.onMetadata({
+        modelTier,
+        subject: input.classification.subject,
+        confidence: input.classification.confidence,
+      });
+
+      // STEP 2: Get model config for the tier
+      const config = modelConfigService.getModelConfig(
+        {
+          ...input.classification,
+          level: modelTier,
+        },
+        input.subscription || 'free'
+      );
+
+      const registryEntry = modelConfigService.getModelRegistryEntry(config.modelId);
+
+      if (!registryEntry) {
+        throw new Error(`Registry entry not found for model ${config.modelId}`);
+      }
+
+      // STEP 3: Create tier-specific LLM using temperature and maxTokens from config
+      const llm = createTierLLM(
+        modelTier,
+        registryEntry,
+        this.logger,
+        config.temperature,
+        config.maxTokens
+      );
+
+      this.logger.info(
+        {
+          modelInfo: llm.getModelInfo(),
+          tier: modelTier,
+          temperature: config.temperature,
+          maxTokens: config.maxTokens,
+        },
+        '[EvaluatePrompt] Tier-specific LLM created for streaming'
+      );
+
+      // STEP 4: Build evaluation prompt with all context
+      const promptTemplate = buildEvaluationPrompt(
+        input.userQuery,
+        input.classification,
+        input.topDocument,
+        (input.classification as any).intent || 'factual_retrieval',
+        input.userPrefs
+      );
+
+      // STEP 5: Format the prompt with user query
+      const prompt = await promptTemplate.format({ query: input.userQuery });
+
+      this.logger.debug(
+        { promptLength: prompt.length, tier: modelTier },
+        '[EvaluatePrompt] Prompt formatted for streaming'
+      );
+
+      let fullAnswer = '';
+
+      // STEP 6: Stream from tier-specific LLM
+      await llm.stream(prompt, {
+        onToken: (token: string) => {
+          fullAnswer += token;
+          callbacks.onToken(token);
+        },
+        onComplete: () => {
+          const latency = Date.now() - startTime;
+
+          this.logger.info(
+            {
+              modelTier,
+              latency,
+              answerLength: fullAnswer.length,
+              modelInfo: llm.getModelInfo(),
+            },
+            '[EvaluatePrompt] Streaming evaluation complete'
+          );
+
+          callbacks.onComplete({
+            answer: fullAnswer,
+            modelUsed: llm.getModelInfo().modelId,
+            levelUsed: modelTier,
+            latency,
+          });
+        },
+        onError: (error: Error) => {
+          this.logger.error(
+            { error, query: input.userQuery.substring(0, 80) },
+            '[EvaluatePrompt] Streaming evaluation failed'
+          );
+          callbacks.onError(error);
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        { error, query: input.userQuery.substring(0, 80) },
+        '[EvaluatePrompt] Streaming evaluation setup failed'
+      );
+      callbacks.onError(error as Error);
+    }
+  }
+
+  /**
    * Main evaluation method
    */
   async evaluate(input: EvaluatePromptInput): Promise<EvaluatePromptOutput> {

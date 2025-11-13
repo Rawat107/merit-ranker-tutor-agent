@@ -86,10 +86,49 @@ export class BasicLLM implements ILLM {
     callbacks: any,
     options: LLMOptions = {}
   ): Promise<void> {
-    // Streaming not implemented for Basic - call generate and invoke onComplete
-    const result = await this.generate(prompt, options);
-    if (callbacks.onComplete) {
-      callbacks.onComplete();
+    try {
+      this.logger.debug({ promptLength: prompt.length }, '[BasicLLM] Starting stream');
+
+      const stream = await this.llm.stream([
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ]);
+
+      for await (const chunk of stream) {
+        // Extract content from the chunk
+        let content: string;
+        if (typeof chunk.content === 'string') {
+          content = chunk.content;
+        } else if (Array.isArray(chunk.content)) {
+          content = chunk.content
+            .map(block => {
+              if (typeof block === 'string') return block;
+              if (block && typeof block === 'object' && 'text' in block) return block.text;
+              return '';
+            })
+            .join('');
+        } else {
+          content = '';
+        }
+
+        if (content && callbacks.onToken) {
+          callbacks.onToken(content);
+        }
+      }
+
+      if (callbacks.onComplete) {
+        callbacks.onComplete();
+      }
+
+      this.logger.info({ model: this.registryEntry.bedrockId }, '[BasicLLM] Stream completed');
+    } catch (error) {
+      this.logger.error({ error }, '[BasicLLM] Stream failed');
+      if (callbacks.onError) {
+        callbacks.onError(error);
+      }
+      throw error;
     }
   }
 
@@ -189,10 +228,49 @@ export class IntermediateLLM implements ILLM {
     callbacks: any,
     options: LLMOptions = {}
   ): Promise<void> {
-    // Streaming not implemented for Intermediate - call generate and invoke onComplete
-    const result = await this.generate(prompt, options);
-    if (callbacks.onComplete) {
-      callbacks.onComplete();
+    try {
+      this.logger.debug({ promptLength: prompt.length }, '[IntermediateLLM] Starting stream');
+
+      const stream = await this.llm.stream([
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ]);
+
+      for await (const chunk of stream) {
+        // Extract content from the chunk
+        let content: string;
+        if (typeof chunk.content === 'string') {
+          content = chunk.content;
+        } else if (Array.isArray(chunk.content)) {
+          content = chunk.content
+            .map(block => {
+              if (typeof block === 'string') return block;
+              if (block && typeof block === 'object' && 'text' in block) return block.text;
+              return '';
+            })
+            .join('');
+        } else {
+          content = '';
+        }
+
+        if (content && callbacks.onToken) {
+          callbacks.onToken(content);
+        }
+      }
+
+      if (callbacks.onComplete) {
+        callbacks.onComplete();
+      }
+
+      this.logger.info({ model: this.registryEntry.bedrockId }, '[IntermediateLLM] Stream completed');
+    } catch (error) {
+      this.logger.error({ error }, '[IntermediateLLM] Stream failed');
+      if (callbacks.onError) {
+        callbacks.onError(error);
+      }
+      throw error;
     }
   }
 
@@ -292,10 +370,49 @@ export class AdvancedLLM implements ILLM {
     callbacks: any,
     options: LLMOptions = {}
   ): Promise<void> {
-    // Streaming not implemented for Advanced - call generate and invoke onComplete
-    const result = await this.generate(prompt, options);
-    if (callbacks.onComplete) {
-      callbacks.onComplete();
+    try {
+      this.logger.debug({ promptLength: prompt.length }, '[AdvancedLLM] Starting stream');
+
+      const stream = await this.llm.stream([
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ]);
+
+      for await (const chunk of stream) {
+        // Extract content from the chunk
+        let content: string;
+        if (typeof chunk.content === 'string') {
+          content = chunk.content;
+        } else if (Array.isArray(chunk.content)) {
+          content = chunk.content
+            .map(block => {
+              if (typeof block === 'string') return block;
+              if (block && typeof block === 'object' && 'text' in block) return block.text;
+              return '';
+            })
+            .join('');
+        } else {
+          content = '';
+        }
+
+        if (content && callbacks.onToken) {
+          callbacks.onToken(content);
+        }
+      }
+
+      if (callbacks.onComplete) {
+        callbacks.onComplete();
+      }
+
+      this.logger.info({ model: this.registryEntry.bedrockId }, '[AdvancedLLM] Stream completed');
+    } catch (error) {
+      this.logger.error({ error }, '[AdvancedLLM] Stream failed');
+      if (callbacks.onError) {
+        callbacks.onError(error);
+      }
+      throw error;
     }
   }
 

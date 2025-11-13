@@ -169,6 +169,55 @@
         box-shadow: 0 10px 20px rgba(245, 87, 108, 0.3);
       }
 
+      .btn-stream {
+        background: linear-gradient(135deg, #06d6a0, #118ab2);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-stream.show {
+        display: block;
+      }
+
+      .btn-stream:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(6, 214, 160, 0.3);
+      }
+
+      .streaming-indicator {
+        background: linear-gradient(90deg, #06d6a0, #118ab2);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        display: none;
+        margin-bottom: 15px;
+      }
+
+      .streaming-indicator.show {
+        display: block;
+      }
+
+      .streaming-indicator::before {
+        content: "🌊 ";
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        50%,
+        100% {
+          opacity: 1;
+        }
+        25%,
+        75% {
+          opacity: 0.5;
+        }
+      }
+
       .box {
         background: #f8f9fa;
         border: 1px solid #e9ecef;
@@ -528,7 +577,7 @@
           <div id="rerankedList"></div>
         </div>
 
-        <!-- Evaluate Button -->
+        <!-- Evaluate Buttons -->
         <div class="button-group" style="margin-bottom: 20px">
           <button
             class="btn-evaluate"
@@ -537,12 +586,22 @@
           >
             ⚡ Evaluate & Generate Response
           </button>
+          <button
+            class="btn-stream"
+            id="streamBtn"
+            onclick="evaluateStreamingPrompt()"
+          >
+            🌊 Stream Response
+          </button>
         </div>
 
         <!-- Final Answer -->
         <div id="answerBox" class="box">
           <div class="section-title">
             Final Response (Intent: <span id="answerIntent">-</span>)
+          </div>
+          <div id="streamingIndicator" class="streaming-indicator">
+            Streaming response...
           </div>
           <div class="answer-content" id="answerContent">-</div>
           <div class="model-info">
@@ -719,6 +778,7 @@
           updateRerankedUI(data.results);
           document.getElementById("rerankedBox").classList.add("show");
           document.getElementById("evaluateBtn").classList.add("show");
+          document.getElementById("streamBtn").classList.add("show");
           document.getElementById("rerankBtn").classList.remove("show");
 
           showSuccess(
@@ -759,6 +819,140 @@
           list.appendChild(el);
           if (idx === 0) selectedDocument = result;
         });
+      }
+
+      // Streaming evaluate and generate response
+      async function evaluateStreamingPrompt() {
+        if (!currentClassification || !rerankedDocuments.length) {
+          showError("Please rerank documents first!");
+          return;
+        }
+
+        showLoading(true, "🌊 Starting streaming evaluation...");
+        updateStep(4);
+
+        try {
+          // Use top reranked document
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          // Show streaming indicator
+          document.getElementById("answerBox").classList.add("show");
+          document.getElementById("streamingIndicator").classList.add("show");
+          const intent = currentClassification.intent || "factual_retrieval";
+          document.getElementById("answerIntent").textContent = intent;
+
+          // Clear previous content
+          const answerContent = document.getElementById("answerContent");
+          answerContent.textContent = "";
+
+          // Create EventSource for Server-Sent Events
+          const eventSource = new EventSource(
+            `http://localhost:3000/evaluate/stream`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          // Note: EventSource doesn't support POST with body directly
+          // We need to use fetch with streaming instead
+          const response = await fetch(
+            "http://localhost:3000/evaluate/stream",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          showLoading(false);
+
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // Keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.type === "token") {
+                    answerContent.textContent += data.content;
+                    answerContent.scrollTop = answerContent.scrollHeight;
+                  } else if (data.type === "metadata") {
+                    console.log("Metadata:", data.content);
+                  } else if (data.type === "complete") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+
+                    if (data.content.success) {
+                      document.getElementById("modelUsed").textContent =
+                        data.content.data.modelUsed;
+                      document.getElementById("modelLevel").textContent =
+                        data.content.data.levelUsed;
+                      document.getElementById("latency").textContent =
+                        `${data.content.data.latency}ms`;
+
+                      showSuccess("Streaming response completed!");
+                    } else {
+                      showError(
+                        data.content.message || "Streaming evaluation failed"
+                      );
+                    }
+                  } else if (data.type === "error") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+                    showError(`Streaming error: ${data.content.message}`);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE data:", line);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          document
+            .getElementById("streamingIndicator")
+            .classList.remove("show");
+          showError(`Streaming evaluation error: ${error.message}`);
+          showLoading(false);
+        }
       }
 
       // Evaluate and generate response
@@ -832,7 +1026,9 @@
         document.getElementById("rerankBtn").classList.remove("show");
         document.getElementById("rerankedBox").classList.remove("show");
         document.getElementById("evaluateBtn").classList.remove("show");
+        document.getElementById("streamBtn").classList.remove("show");
         document.getElementById("answerBox").classList.remove("show");
+        document.getElementById("streamingIndicator").classList.remove("show");
         currentClassification = null;
         currentDocuments = [];
         rerankedDocuments = [];
