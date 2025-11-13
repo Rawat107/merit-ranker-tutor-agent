@@ -89,35 +89,71 @@ export async function webSearchTool(
   );
 
   if (!process.env.TAVILY_API_KEY) {
-    logger?.error('[Tavily] TAVILY_API_KEY not set');
+    logger?.warn('[Tavily] TAVILY_API_KEY not set - returning empty results');
+    logger?.warn('[Tavily] Set TAVILY_API_KEY in .env to enable web search');
     return [];
   }
 
   try {
+    // Tavily has a max query length of 400 characters - truncate if needed
+    const MAX_QUERY_LENGTH = 400;
+    let truncatedQuery = query;
+    
+    if (query.length > MAX_QUERY_LENGTH) {
+      truncatedQuery = query.substring(0, MAX_QUERY_LENGTH - 3) + '...';
+      logger?.warn(
+        { originalLength: query.length, truncatedLength: truncatedQuery.length },
+        '[Tavily] Query truncated to fit 400 character limit'
+      );
+    }
+
     const tavilyTool = initializeTavilyTool(subject, logger);
-    const searchResults = await tavilyTool.invoke({ query });
+    const searchResults = await tavilyTool.invoke({ query: truncatedQuery });
 
     let results: any[] = [];
 
+    // Handle string response
     if (typeof searchResults === 'string') {
       try {
         const parsed = JSON.parse(searchResults);
+        
+        // Check for error in parsed response
+        if (parsed.error) {
+          logger?.warn(
+            { error: parsed.error, query: truncatedQuery.substring(0, 80) },
+            '[Tavily] API returned error'
+          );
+          return [];
+        }
+        
         results = parsed.results || [parsed];
       } catch (e) {
         results = [{ title: 'Search Result', answer: searchResults, url: '' }];
       }
-    } else if (typeof searchResults === 'object' && searchResults !== null) {
+    } 
+    // Handle object response
+    else if (typeof searchResults === 'object' && searchResults !== null) {
+      // Check for error field
+      if ('error' in searchResults) {
+        logger?.warn(
+          { error: searchResults.error, query: truncatedQuery.substring(0, 80) },
+          '[Tavily] API returned error - no web results found'
+        );
+        return [];
+      }
+      
       if ('results' in searchResults && Array.isArray(searchResults.results)) {
         results = searchResults.results;
       } else if (Array.isArray(searchResults)) {
         results = searchResults;
       } else {
+        logger?.warn({ searchResults }, '[Tavily] Unexpected response format');
         return [];
       }
     }
 
     if (!results || results.length === 0) {
-      logger?.warn('[Tavily] No results returned');
+      logger?.warn('[Tavily] No results returned from API');
       return [];
     }
 
@@ -145,14 +181,14 @@ export async function webSearchTool(
 
     logger?.info(
       { count: documents.length, topScore: documents[0]?.score },
-      '[Tavily]  Web search complete'
+      '[Tavily] Web search complete'
     );
 
     return documents;
   } catch (error: any) {
     logger?.error(
-      { error: error.message },
-      '[Tavily]  Search failed'
+      { error: error.message, stack: error.stack },
+      '[Tavily] Search failed'
     );
     return [];
   }

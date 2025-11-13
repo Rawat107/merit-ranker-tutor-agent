@@ -1,93 +1,32 @@
-import {
-  BedrockAgentRuntimeClient,
-  RerankCommand,
-  RerankCommandInput,
-} from '@aws-sdk/client-bedrock-agent-runtime';
+import { CohereRerank } from '@langchain/cohere';
+import { Document as LangChainDocument } from '@langchain/core/documents';
 import { Document, RerankerResult } from '../types/index.js';
-import { modelConfigService } from '../config/modelConfig.js';
 import pino from 'pino';
 
 /**
- * AWS Bedrock Reranker using native RerankCommand
- * Config-driven, uses modelConfigService
- * 
- * Enhanced: Detects direct factual questions and boosts scores appropriately
+ * Cohere Reranker using LangChain
+ * Simple, fast, and returns clean data with relevance scores
  */
 export class Reranker {
-  private client: BedrockAgentRuntimeClient;
-  private rerankerConfig: any;
+  private cohereRerank: CohereRerank;
 
   constructor(private logger: pino.Logger) {
     this.logger = logger;
-    this.rerankerConfig = modelConfigService.getRerankerConfig();
 
-    // Initialize Bedrock Agent Runtime client
-    this.client = new BedrockAgentRuntimeClient({
-      region: 'ap-northeast-1', // amazon.rerank-v1:0 is available here
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-      },
+    // Initialize Cohere Rerank
+    this.cohereRerank = new CohereRerank({
+      apiKey: process.env.COHERE_API_KEY,
+      model: 'rerank-english-v3.0', // Latest model
+      topN: 10, // We'll filter this later based on topK parameter
     });
 
     this.logger.info(
       {
-        modelId: this.rerankerConfig.modelId,
-        region: 'ap-northeast-1',
+        model: 'rerank-english-v3.0',
+        provider: 'Cohere',
       },
-      '[Reranker] Initialized BedrockAgentRuntimeClient'
+      '[Reranker] Initialized Cohere Reranker'
     );
-  }
-
-  /**
-   * Detect if this is a direct factual question
-   * e.g., "When did World War 2 happen?", "How long is Japan's longest road?"
-   */
-  private isDirectFactualQuestion(query: string): boolean {
-    const directPatterns = [
-      /^(when|where|what|who|how many|how long|how far|how old|what year|what time|what date)\b/i,
-      /\b(happened|occurred|was born|died|was founded|was built|is located|took place)\b.*\?$/i,
-    ];
-    
-    return directPatterns.some(pattern => pattern.test(query));
-  }
-
-  /**
-   * Extract key entities/facts from query for better matching
-   * e.g., "When did World War 2 happen?" → ["world war 2", "happen", "when"]
-   */
-  private extractQueryEntities(query: string): string[] {
-    const entities: string[] = [];
-    
-    // Remove question marks and extra spaces
-    const cleaned = query.replace(/[?!.]/g, '').trim();
-    
-    // Extract key noun phrases and dates
-    const words = cleaned.toLowerCase().split(/\s+/);
-    
-    // Combine consecutive words that might be proper nouns (World War 2)
-    for (let i = 0; i < words.length; i++) {
-      // Add individual words
-      if (words[i].length > 3) entities.push(words[i]);
-      
-      // Add pairs of words (for multi-word entities)
-      if (i < words.length - 1) {
-        const pair = `${words[i]} ${words[i + 1]}`;
-        if (pair.length > 5) entities.push(pair);
-      }
-    }
-    
-    return [...new Set(entities)]; // Remove duplicates
-  }
-
-  /**
-   * Check how well a document matches the query entities
-   * Used for boosting direct factual questions
-   */
-  private calculateEntityMatchScore(docText: string, queryEntities: string[]): number {
-    const docLower = docText.toLowerCase();
-    const matches = queryEntities.filter(entity => docLower.includes(entity));
-    return matches.length > 0 ? matches.length / queryEntities.length : 0;
   }
 
   async rerank(
@@ -106,110 +45,72 @@ export class Reranker {
     }
 
     try {
-      const input: RerankCommandInput = {
-        queries: [
-          {
-            type: 'TEXT',
-            textQuery: {
-              text: query,
-            },
-          },
-        ],
-        sources: documents.map((doc) => ({
-          type: 'INLINE',
-          inlineDocumentSource: {
-            type: 'TEXT',
-            textDocument: {
-              text: doc.text.substring(0, 2000), // Limit to 2000 chars
-            },
-          },
-        })),
-        rerankingConfiguration: {
-          type: 'BEDROCK_RERANKING_MODEL',
-          bedrockRerankingConfiguration: {
-            numberOfResults: documents.length,
-            modelConfiguration: {
-              modelArn: 'arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.rerank-v1:0',
-            },
-          },
-        },
-      };
-
-      this.logger.info('[Reranker] Sending RerankCommand request to Bedrock');
-      const command = new RerankCommand(input);
-      const response = await this.client.send(command);
-
-      // Detect if this is a direct factual question
-      const isDirectQuestion = this.isDirectFactualQuestion(query);
-      const queryEntities = this.extractQueryEntities(query);
-
-      this.logger.debug(
-        { isDirectQuestion, entityCount: queryEntities.length },
-        '[Reranker] Query analysis'
+      // Convert our Document type to LangChain Document format
+      const langchainDocs = documents.map(
+        (doc) =>
+          new LangChainDocument({
+            pageContent: doc.text,
+            metadata: doc.metadata || {},
+          })
       );
 
-      // Map response to RerankerResult with entity matching boost
-      const results: RerankerResult[] =
-        response.results?.map((r) => {
-          const originalDoc = documents[r.index ?? 0];
-          let score = r.relevanceScore ?? 0;
+      // Use compressDocuments to get reranked results with scores
+      const rerankedDocs = await this.cohereRerank.compressDocuments(
+        langchainDocs,
+        query
+      );
 
-          // Boost scores for direct factual questions that match key entities
-          if (isDirectQuestion && score < 0.9) {
-            const entityMatch = this.calculateEntityMatchScore(originalDoc.text, queryEntities);
-            
-            // If document contains key query entities, boost the score
-            if (entityMatch > 0.5) {
-              const boost = entityMatch * 0.3; // Up to 30% boost
-              score = Math.min(0.95, score + boost);
-              
-              this.logger.debug(
-                { 
-                  originalScore: r.relevanceScore,
-                  boostedScore: score.toFixed(3),
-                  entityMatch: entityMatch.toFixed(2),
-                  docId: originalDoc.id
-                },
-                '[Reranker] Applied entity match boost'
-              );
-            }
-          }
+      this.logger.info(
+        { rerankedCount: rerankedDocs.length },
+        '[Reranker] Cohere reranking complete'
+      );
 
-          // Generate reason based on relevance score
-          let reason = '';
-          if (score >= 0.9) {
-            reason = 'Highly relevant - Directly answers the query';
-          } else if (score >= 0.7) {
-            reason = 'Very relevant - Contains key information related to query';
-          } else if (score >= 0.5) {
-            reason = 'Moderately relevant - Partially addresses the query';
-          } else if (score >= 0.3) {
-            reason = 'Somewhat relevant - Contains related information';
-          } else {
-            reason = 'Low relevance - Minimal connection to query';
-          }
+      // Map back to our RerankerResult format
+      const results: RerankerResult[] = rerankedDocs.map((doc) => {
+        const score = doc.metadata.relevanceScore || 0;
 
-          return {
-            document: originalDoc,
-            score,
-            reason: `${reason} (score: ${score.toFixed(3)})`,
-          };
-        }) || [];
+        // Generate reason based on relevance score
+        let reason = '';
+        if (score >= 0.9) {
+          reason = 'Highly relevant - Directly answers the query';
+        } else if (score >= 0.7) {
+          reason = 'Very relevant - Contains key information';
+        } else if (score >= 0.5) {
+          reason = 'Moderately relevant - Partially addresses query';
+        } else if (score >= 0.3) {
+          reason = 'Somewhat relevant - Related information';
+        } else {
+          reason = 'Low relevance - Minimal connection';
+        }
 
-      // Sort by descending score and return only topK results
-      const sorted = results.sort((a, b) => b.score - a.score).slice(0, topK);
+        // Find original document by matching text
+        const originalDoc = documents.find((d) => d.text === doc.pageContent) || {
+          id: 'unknown',
+          text: doc.pageContent,
+          metadata: doc.metadata,
+          score: score,
+        };
+
+        return {
+          document: originalDoc,
+          score,
+          reason: `${reason} (${(score * 100).toFixed(1)}%)`,
+        };
+      });
+
+      // Take only topK results (Cohere already returns sorted by score)
+      const topResults = results.slice(0, topK);
 
       this.logger.info(
         {
           originalCount: documents.length,
-          rerankedCount: sorted.length,
-          topScore: sorted[0]?.score.toFixed(3),
-          isDirectQuestion,
+          rerankedCount: topResults.length,
+          topScore: topResults[0] ? (topResults[0].score * 100).toFixed(1) + '%' : 'N/A',
         },
         '[Reranker] Reranking complete'
       );
 
-      return sorted;
+      return topResults;
     } catch (error) {
       this.logger.error({ error }, '[Reranker] Error during reranking');
       // Fallback: return documents with score 0.5

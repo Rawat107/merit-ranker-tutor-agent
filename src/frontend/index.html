@@ -186,6 +186,18 @@
         box-shadow: 0 10px 20px rgba(6, 214, 160, 0.3);
       }
 
+      .btn-quick {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+      }
+
+      .btn-quick:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(255, 107, 107, 0.4);
+      }
+
       .streaming-indicator {
         background: linear-gradient(90deg, #06d6a0, #118ab2);
         color: white;
@@ -508,6 +520,13 @@
             placeholder="Ask your question... e.g., 'How do I solve a quadratic equation?'"
           ></textarea>
           <div class="button-group">
+            <button
+              class="btn-quick"
+              id="quickAnswerBtn"
+              onclick="quickAnswer()"
+            >
+              ⚡ Quick Answer (All Steps)
+            </button>
             <button
               class="btn-primary"
               id="classifyBtn"
@@ -1033,6 +1052,181 @@
         currentDocuments = [];
         rerankedDocuments = [];
         updateStep(1);
+      }
+
+      // Quick Answer - All steps in one go with streaming
+      async function quickAnswer() {
+        const query = document.getElementById("queryInput").value.trim();
+        if (!query) {
+          showError("Please enter a question!");
+          return;
+        }
+
+        // Start timer for total latency
+        const startTime = Date.now();
+
+        showLoading(true, "⚡ Processing your question (all steps)...");
+        updateStep(2);
+
+        try {
+          // STEP 1: Classify & Retrieve
+          const classifyResponse = await fetch("http://localhost:3000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: query }),
+          });
+
+          if (!classifyResponse.ok)
+            throw new Error(
+              `Classification failed: HTTP ${classifyResponse.status}`
+            );
+
+          const classifyData = await classifyResponse.json();
+          currentClassification = classifyData.classification;
+          currentDocuments = classifyData.sources || [];
+
+          console.log(
+            `[Quick Answer] Classification: ${currentClassification.subject} (${currentClassification.level})`
+          );
+
+          // STEP 2: Rerank
+          updateStep(3);
+          showLoading(true, "⚡ Reranking documents...");
+
+          const rerankResponse = await fetch("http://localhost:3000/rerank", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              documents: currentDocuments,
+              topK: 3,
+            }),
+          });
+
+          if (!rerankResponse.ok)
+            throw new Error(`Reranking failed: HTTP ${rerankResponse.status}`);
+
+          const rerankData = await rerankResponse.json();
+          rerankedDocuments = rerankData.results || [];
+
+          console.log(
+            `[Quick Answer] Reranked ${rerankedDocuments.length} documents`
+          );
+
+          // STEP 3: Evaluate with Streaming
+          updateStep(4);
+          showLoading(true, "⚡ Generating streaming response...");
+
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          // Show answer box and streaming indicator
+          document.getElementById("answerBox").classList.add("show");
+          document.getElementById("streamingIndicator").classList.add("show");
+          const intent = currentClassification.intent || "factual_retrieval";
+          document.getElementById("answerIntent").textContent = intent;
+
+          // Clear previous content
+          const answerContent = document.getElementById("answerContent");
+          answerContent.textContent = "";
+
+          showLoading(false);
+
+          // Stream the response
+          const response = await fetch(
+            "http://localhost:3000/evaluate/stream",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userQuery: query,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Streaming failed: HTTP ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.type === "token") {
+                    answerContent.textContent += data.content;
+                    answerContent.scrollTop = answerContent.scrollHeight;
+                  } else if (data.type === "complete") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+
+                    if (data.content.success) {
+                      const totalLatency = Date.now() - startTime;
+
+                      // Display model info + TOTAL latency
+                      document.getElementById("modelUsed").textContent =
+                        data.content.data.modelUsed;
+                      document.getElementById("modelLevel").textContent =
+                        data.content.data.levelUsed;
+                      document.getElementById("latency").textContent =
+                        `${totalLatency}ms (total: classify → rerank → stream)`;
+
+                      showSuccess(
+                        `Quick answer complete! Total time: ${totalLatency}ms`
+                      );
+
+                      console.log(
+                        `[Quick Answer] Total latency: ${totalLatency}ms`
+                      );
+                      console.log(
+                        `[Quick Answer] Model: ${data.content.data.modelUsed} (${data.content.data.levelUsed})`
+                      );
+                    } else {
+                      showError(data.content.message || "Quick answer failed");
+                    }
+                  } else if (data.type === "error") {
+                    document
+                      .getElementById("streamingIndicator")
+                      .classList.remove("show");
+                    showError(`Error: ${data.content.message}`);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE data:", line);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          document
+            .getElementById("streamingIndicator")
+            .classList.remove("show");
+          showError(`Quick answer failed: ${error.message}`);
+          showLoading(false);
+        }
       }
 
       // Initialize
