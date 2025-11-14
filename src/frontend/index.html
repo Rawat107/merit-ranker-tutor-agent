@@ -1,0 +1,1320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Tutor - Classification & Evaluation Pipeline</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1000px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px 30px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 32px;
+        margin-bottom: 10px;
+        font-weight: 700;
+      }
+
+      .header p {
+        font-size: 14px;
+        opacity: 0.9;
+      }
+
+      .content {
+        padding: 30px;
+      }
+
+      .section {
+        margin-bottom: 30px;
+      }
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .section-title::before {
+        content: "";
+        width: 4px;
+        height: 20px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 2px;
+      }
+
+      textarea {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: inherit;
+        min-height: 100px;
+        transition: all 0.3s;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+
+      .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+      }
+
+      .btn-secondary {
+        background: #f0f0f0;
+        color: #333;
+        flex: 1;
+        min-width: 150px;
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: #e0e0e0;
+      }
+
+      .btn-rerank {
+        background: linear-gradient(135deg, #f59e0b, #f97316);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-rerank.show {
+        display: block;
+      }
+
+      .btn-rerank:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(249, 115, 22, 0.3);
+      }
+
+      .btn-evaluate {
+        background: linear-gradient(135deg, #f093fb, #f5576c);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-evaluate.show {
+        display: block;
+      }
+
+      .btn-evaluate:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(245, 87, 108, 0.3);
+      }
+
+      .btn-stream {
+        background: linear-gradient(135deg, #06d6a0, #118ab2);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+        display: none;
+      }
+
+      .btn-stream.show {
+        display: block;
+      }
+
+      .btn-stream:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(6, 214, 160, 0.3);
+      }
+
+      .btn-quick {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+        color: white;
+        flex: 1;
+        min-width: 150px;
+      }
+
+      .btn-quick:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(255, 107, 107, 0.4);
+      }
+
+      .status-box {
+        background: #f0f0f0;
+        color: #333;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        display: none;
+        margin-bottom: 10px;
+      }
+
+      .status-box.show {
+        display: block;
+      }
+
+      .streaming-indicator {
+        background: linear-gradient(90deg, #06d6a0, #118ab2);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        display: none;
+        margin-bottom: 15px;
+      }
+
+      .streaming-indicator.show {
+        display: block;
+      }
+
+      .streaming-indicator::before {
+        content: "🌊 ";
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        50%,
+        100% {
+          opacity: 1;
+        }
+        25%,
+        75% {
+          opacity: 0.5;
+        }
+      }
+
+      .box {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 20px;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .box.show {
+        display: block;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+
+      .item {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #667eea;
+      }
+
+      .item label {
+        display: block;
+        font-size: 11px;
+        color: #999;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+      }
+
+      .item value {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      .confidence-bar {
+        background: #e9ecef;
+        height: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+
+      .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        transition: width 0.3s;
+      }
+
+      .intent-info {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #f5576c;
+        margin-top: 10px;
+      }
+
+      .intent-info label {
+        display: block;
+        font-size: 11px;
+        color: #999;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+      }
+
+      .intent-info value {
+        display: block;
+        font-size: 13px;
+        color: #333;
+        margin-bottom: 8px;
+      }
+
+      .document-item {
+        background: white;
+        padding: 12px;
+        border-radius: 6px;
+        border-left: 3px solid #667eea;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+
+      .document-item:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+
+      .document-item.selected {
+        background: #f0f0f0;
+        border-left-color: #f5576c;
+      }
+
+      .document-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 5px;
+      }
+
+      .document-snippet {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+        max-height: 60px;
+        overflow: hidden;
+      }
+
+      .document-score {
+        display: inline-block;
+        background: #e9ecef;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+
+      .answer-content {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        line-height: 1.8;
+        color: #333;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 600px;
+        overflow-y: auto;
+        font-size: 14px;
+      }
+
+      .model-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-top: 15px;
+        font-size: 12px;
+      }
+
+      .model-info-item {
+        background: white;
+        padding: 10px;
+        border-radius: 6px;
+        border-left: 2px solid #667eea;
+      }
+
+      .model-info-label {
+        color: #999;
+        text-transform: uppercase;
+        margin-bottom: 3px;
+      }
+
+      .model-info-value {
+        font-weight: 600;
+        color: #333;
+      }
+
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .loading.show {
+        display: block;
+      }
+
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 15px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .error-box {
+        background: #fee;
+        border: 1px solid #fcc;
+        border-radius: 8px;
+        padding: 15px;
+        color: #c33;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .error-box.show {
+        display: block;
+      }
+
+      .success-box {
+        background: #efe;
+        border: 1px solid #cfc;
+        border-radius: 8px;
+        padding: 15px;
+        color: #3c3;
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      .success-box.show {
+        display: block;
+      }
+
+      .step-indicator {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        font-size: 12px;
+      }
+
+      .step {
+        flex: 1;
+        padding: 8px;
+        text-align: center;
+        border-radius: 6px;
+        background: #e9ecef;
+        color: #666;
+        font-weight: 600;
+      }
+
+      .step.active {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+      }
+
+      .step.completed {
+        background: #10b981;
+        color: white;
+      }
+
+      @media (max-width: 600px) {
+        .header h1 {
+          font-size: 24px;
+        }
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+        .button-group {
+          flex-direction: column;
+        }
+        .model-info {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🤖 AI Tutor Pipeline</h1>
+        <p>Classification → Retrieval → Reranking → Evaluation</p>
+      </div>
+
+      <div class="content">
+        <!-- Step Indicator -->
+        <div class="step-indicator">
+          <div class="step" id="step1">1. Input</div>
+          <div class="step" id="step2">2. Classify & Retrieve</div>
+          <div class="step" id="step3">3. Rerank</div>
+          <div class="step" id="step4">4. Evaluate</div>
+        </div>
+
+        <!-- Error/Success Messages -->
+        <div id="errorBox" class="error-box"></div>
+        <div id="successBox" class="success-box"></div>
+
+        <!-- Input Section -->
+        <div class="section">
+          <div class="section-title">Your Question</div>
+          <textarea
+            id="queryInput"
+            placeholder="Ask your question... e.g., 'How do I solve a quadratic equation?'"
+          ></textarea>
+          <div class="button-group">
+            <button
+              class="btn-quick"
+              id="quickAnswerBtn"
+              onclick="quickAnswer()"
+            >
+              ⚡ Quick Answer (All Steps)
+            </button>
+            <button
+              class="btn-primary"
+              id="classifyBtn"
+              onclick="classifyQuery()"
+            >
+              📝 Classify & Retrieve
+            </button>
+            <button class="btn-secondary" id="clearBtn" onclick="clearAll()">
+              Clear
+            </button>
+          </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="loading">
+          <div class="spinner"></div>
+          <p id="loadingText">Processing...</p>
+        </div>
+
+        <!-- Classification Results -->
+        <div id="classificationBox" class="box">
+          <div class="section-title">Classification Results</div>
+          <div class="grid-2">
+            <div class="item">
+              <label>Subject</label>
+              <value id="classSubject">-</value>
+            </div>
+            <div class="item">
+              <label>Level</label>
+              <value id="classLevel">-</value>
+            </div>
+            <div class="item">
+              <label>Confidence</label>
+              <value id="classConfidence">-</value>
+              <div class="confidence-bar">
+                <div id="confidenceFill" class="confidence-fill"></div>
+              </div>
+            </div>
+            <div class="item">
+              <label>Intent</label>
+              <value id="classIntent">-</value>
+            </div>
+          </div>
+
+          <div class="intent-info">
+            <label>Expected Response Format</label>
+            <value id="expectedFormat">-</value>
+          </div>
+        </div>
+
+        <!-- Retrieved Documents -->
+        <div id="documentsBox" class="box">
+          <div class="section-title">Retrieved Documents (Click to select)</div>
+          <div id="documentsList"></div>
+        </div>
+
+        <!-- Rerank Button -->
+        <div class="button-group" style="margin-bottom: 20px">
+          <button class="btn-rerank" id="rerankBtn" onclick="rerankDocuments()">
+            📊 Rerank Documents
+          </button>
+        </div>
+
+        <!-- Reranked Results -->
+        <div id="rerankedBox" class="box">
+          <div class="section-title">Reranked Results</div>
+          <div id="rerankedList"></div>
+        </div>
+
+        <!-- Evaluate Buttons -->
+        <div class="button-group" style="margin-bottom: 20px">
+          <button
+            class="btn-evaluate"
+            id="evaluateBtn"
+            onclick="evaluatePrompt()"
+          >
+            ⚡ Evaluate & Generate Response
+          </button>
+          <button
+            class="btn-stream"
+            id="streamBtn"
+            onclick="evaluateStreamingPrompt()"
+          >
+            🌊 Stream Response
+          </button>
+        </div>
+
+        <!-- Final Answer -->
+        <div id="answerBox" class="box show">
+          <div class="section-title">
+            Final Response (Intent: <span id="answerIntent">-</span>)
+          </div>
+          <div id="statusBox" class="status-box"></div>
+          <div id="streamingIndicator" class="streaming-indicator">
+            Streaming response...
+          </div>
+          <div class="answer-content" id="answerContent">-</div>
+          <div class="model-info">
+            <div class="model-info-item">
+              <div class="model-info-label">Model</div>
+              <div class="model-info-value" id="modelUsed">-</div>
+            </div>
+            <div class="model-info-item">
+              <div class="model-info-label">Model Tier</div>
+              <div class="model-info-value" id="modelLevel">-</div>
+            </div>
+            <div class="model-info-item">
+              <div class="model-info-label">Latency</div>
+              <div class="model-info-value" id="latency">-</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let currentClassification = null;
+      let currentDocuments = [];
+      let rerankedDocuments = [];
+      let selectedDocument = null;
+
+      // Show status message in top-left box
+      function showStatus(message) {
+        const statusBox = document.getElementById("statusBox");
+        statusBox.textContent = message;
+        statusBox.classList.add("show");
+      }
+
+      // Hide status message
+      function hideStatus() {
+        const statusBox = document.getElementById("statusBox");
+        statusBox.classList.remove("show");
+      }
+
+      // Update step indicator
+      function updateStep(stepNum) {
+        for (let i = 1; i <= 4; i++) {
+          const step = document.getElementById(`step${i}`);
+          if (i < stepNum) step.className = "step completed";
+          else if (i === stepNum) step.className = "step active";
+          else step.className = "step";
+        }
+      }
+
+      function showLoading(show, text = "Processing...") {
+        const loading = document.getElementById("loading");
+        document.getElementById("loadingText").textContent = text;
+        loading.classList.toggle("show", show);
+      }
+
+      function showError(message) {
+        const errorBox = document.getElementById("errorBox");
+        errorBox.textContent = `❌ ${message}`;
+        errorBox.classList.add("show");
+        setTimeout(() => errorBox.classList.remove("show"), 5000);
+      }
+
+      function showSuccess(message) {
+        const successBox = document.getElementById("successBox");
+        successBox.textContent = `✅ ${message}`;
+        successBox.classList.add("show");
+        setTimeout(() => successBox.classList.remove("show"), 3000);
+      }
+
+      // Classify and retrieve
+      async function classifyQuery() {
+        const query = document.getElementById("queryInput").value.trim();
+        if (!query) {
+          showError("Please enter a question!");
+          return;
+        }
+
+        showLoading(true, "📝 Classifying & Retrieving...");
+        updateStep(2);
+
+        try {
+          const response = await fetch("http://localhost:3000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: query }),
+          });
+
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const data = await response.json();
+          currentClassification = data.classification;
+          currentDocuments = data.sources || [];
+
+          updateClassificationUI(data.classification);
+          updateDocumentsUI(data.sources || []);
+
+          document.getElementById("classificationBox").classList.add("show");
+          document.getElementById("documentsBox").classList.add("show");
+          document.getElementById("rerankBtn").classList.add("show");
+
+          showSuccess(`Found ${currentDocuments.length} documents`);
+        } catch (error) {
+          showError(`Classification failed: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      function updateClassificationUI(classification) {
+        document.getElementById("classSubject").textContent =
+          classification.subject || "-";
+        document.getElementById("classLevel").textContent =
+          classification.level || "-";
+        document.getElementById("classIntent").textContent =
+          classification.intent || "factual_retrieval";
+
+        const confidence = (classification.confidence * 100).toFixed(1);
+        document.getElementById("classConfidence").textContent =
+          `${confidence}%`;
+        document.getElementById("confidenceFill").style.width =
+          `${confidence}%`;
+
+        document.getElementById("expectedFormat").textContent =
+          classification.expectedFormat || "Direct answer with explanation";
+      }
+
+      function updateDocumentsUI(documents) {
+        const list = document.getElementById("documentsList");
+        list.innerHTML = "";
+
+        if (!documents.length) {
+          list.innerHTML = '<p style="color: #999;">No documents retrieved</p>';
+          return;
+        }
+
+        documents.forEach((doc, idx) => {
+          const el = document.createElement("div");
+          el.className = "document-item";
+          if (idx === 0) el.classList.add("selected");
+
+          el.onclick = () => {
+            document
+              .querySelectorAll(".document-item")
+              .forEach((e) => e.classList.remove("selected"));
+            el.classList.add("selected");
+            selectedDocument = doc;
+          };
+
+          el.innerHTML = `
+          <div class="document-title">${doc.id || `Document ${idx + 1}`}</div>
+          <div class="document-snippet">${doc.text.substring(0, 100)}...</div>
+          <span class="document-score">Score: ${((doc.score || 0.7) * 100).toFixed(1)}%</span>
+        `;
+
+          list.appendChild(el);
+          if (idx === 0) selectedDocument = doc;
+        });
+      }
+
+      // Rerank documents
+      async function rerankDocuments() {
+        if (!currentDocuments.length) {
+          showError("No documents to rerank!");
+          return;
+        }
+
+        showLoading(true, "📊 Reranking documents...");
+        updateStep(3);
+
+        try {
+          const query = document.getElementById("queryInput").value;
+          const response = await fetch("http://localhost:3000/rerank", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              documents: currentDocuments,
+              topK: 3,
+            }),
+          });
+
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const data = await response.json();
+          rerankedDocuments = data.results || [];
+
+          updateRerankedUI(data.results);
+          document.getElementById("rerankedBox").classList.add("show");
+          document.getElementById("evaluateBtn").classList.add("show");
+          document.getElementById("streamBtn").classList.add("show");
+          document.getElementById("rerankBtn").classList.remove("show");
+
+          showSuccess(
+            'Documents reranked! Click "Evaluate" to generate response'
+          );
+        } catch (error) {
+          showError(`Reranking failed: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      function updateRerankedUI(results) {
+        const list = document.getElementById("rerankedList");
+        list.innerHTML = "";
+
+        results.forEach((result, idx) => {
+          const el = document.createElement("div");
+          el.className = "document-item";
+          if (idx === 0) el.classList.add("selected");
+
+          el.onclick = () => {
+            document
+              .querySelectorAll("#rerankedList .document-item")
+              .forEach((e) => e.classList.remove("selected"));
+            el.classList.add("selected");
+            selectedDocument = result.metadata || result;
+          };
+
+          const rankChange = idx === 0 ? "(📈 Top Result!)" : "";
+
+          el.innerHTML = `
+          <div class="document-title">#${idx + 1} ${result.id} ${rankChange}</div>
+          <div class="document-snippet">${result.text.substring(0, 100)}...</div>
+          <span class="document-score">Reranked: ${(result.reranked_score * 100).toFixed(1)}% | ${result.reason}</span>
+        `;
+
+          list.appendChild(el);
+          if (idx === 0) selectedDocument = result;
+        });
+      }
+
+      // Streaming evaluate and generate response
+      async function evaluateStreamingPrompt() {
+        if (!currentClassification || !rerankedDocuments.length) {
+          showError("Please rerank documents first!");
+          return;
+        }
+
+        updateStep(4);
+
+        const level = currentClassification.level;
+        const subject = currentClassification.subject;
+
+        // Show tier-based status
+        let statusMessage = "Thinking...";
+        if (level === "intermediate") {
+          statusMessage = "Thinking harder...";
+        } else if (level === "advanced") {
+          statusMessage = "Thinking deeply...";
+        }
+
+        // Override with subject-specific message
+        if (subject === "math") {
+          statusMessage = "Solving the problem...";
+        } else if (subject === "reasoning") {
+          statusMessage = "Working through the logic...";
+        } else if (subject === "science") {
+          statusMessage = "Analyzing the concepts...";
+        } else if (subject === "history") {
+          statusMessage = "Researching historical context...";
+        } else if (subject === "english_grammar") {
+          statusMessage = "Checking grammar rules...";
+        }
+
+        showStatus(statusMessage);
+
+        try {
+          // Use top reranked document
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          // Show answer box
+          document.getElementById("answerBox").classList.add("show");
+          const intent = currentClassification.intent || "factual_retrieval";
+          document.getElementById("answerIntent").textContent = intent;
+
+          // Clear previous content
+          const answerContent = document.getElementById("answerContent");
+          answerContent.textContent = "";
+
+          // Create EventSource for Server-Sent Events
+          const eventSource = new EventSource(
+            `http://localhost:3000/evaluate/stream`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          // Note: EventSource doesn't support POST with body directly
+          // We need to use fetch with streaming instead
+          const response = await fetch(
+            "http://localhost:3000/evaluate/stream",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userQuery: document.getElementById("queryInput").value,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let isFirstToken = true;
+
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // Keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.type === "token") {
+                    // Hide status on first real token
+                    if (isFirstToken) {
+                      hideStatus();
+                      isFirstToken = false;
+                    }
+
+                    // Filter out status messages (check for common status prefixes)
+                    const content = data.content;
+                    const isStatusMessage =
+                      /^(Analyzing|Thinking|Solving|Working|Preparing|Checking|Researching|Searching|Found)/i.test(
+                        content.trim()
+                      );
+                    if (!isStatusMessage) {
+                      answerContent.textContent += content;
+                      answerContent.scrollTop = answerContent.scrollHeight;
+                    }
+                  } else if (data.type === "metadata") {
+                    console.log("Metadata:", data.content);
+                  } else if (data.type === "complete") {
+                    hideStatus();
+
+                    if (data.content.success) {
+                      document.getElementById("modelUsed").textContent =
+                        data.content.data.modelUsed;
+                      document.getElementById("modelLevel").textContent =
+                        data.content.data.levelUsed;
+                      document.getElementById("latency").textContent =
+                        `${data.content.data.latency}ms`;
+
+                      showSuccess("Answer complete!");
+                    } else {
+                      showError(
+                        data.content.message || "Streaming evaluation failed"
+                      );
+                    }
+                  } else if (data.type === "error") {
+                    hideStatus();
+                    showError(`Streaming error: ${data.content.message}`);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE data:", line);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          hideStatus();
+          showError(`Streaming evaluation error: ${error.message}`);
+        }
+      }
+
+      // Evaluate and generate response
+      async function evaluatePrompt() {
+        if (!currentClassification || !rerankedDocuments.length) {
+          showError("Please rerank documents first!");
+          return;
+        }
+
+        showLoading(true, "⚡ Evaluating & Generating response...");
+        updateStep(4);
+
+        try {
+          // Use top reranked document
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          const response = await fetch("http://localhost:3000/evaluate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userQuery: document.getElementById("queryInput").value,
+              classification: currentClassification,
+              documents: docsForEval,
+              userSubscription: "free",
+            }),
+          });
+
+          if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.message || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          if (data.success) {
+            const intent = currentClassification.intent || "factual_retrieval";
+            document.getElementById("answerIntent").textContent = intent;
+            document.getElementById("answerContent").textContent =
+              data.data.answer;
+            document.getElementById("modelUsed").textContent =
+              data.data.modelUsed;
+            document.getElementById("modelLevel").textContent =
+              data.data.levelUsed;
+            document.getElementById("latency").textContent =
+              `${data.data.latency}ms`;
+
+            document.getElementById("answerBox").classList.add("show");
+            showSuccess("Response generated successfully!");
+          } else {
+            showError(data.message || "Evaluation failed");
+          }
+        } catch (error) {
+          showError(`Evaluation error: ${error.message}`);
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      function clearAll() {
+        document.getElementById("queryInput").value = "";
+        document.getElementById("classificationBox").classList.remove("show");
+        document.getElementById("documentsBox").classList.remove("show");
+        document.getElementById("rerankBtn").classList.remove("show");
+        document.getElementById("rerankedBox").classList.remove("show");
+        document.getElementById("evaluateBtn").classList.remove("show");
+        document.getElementById("streamBtn").classList.remove("show");
+        document.getElementById("answerBox").classList.remove("show");
+        document.getElementById("streamingIndicator").classList.remove("show");
+        currentClassification = null;
+        currentDocuments = [];
+        rerankedDocuments = [];
+        updateStep(1);
+      }
+
+      // Quick Answer - All steps in one go with streaming
+      async function quickAnswer() {
+        const query = document.getElementById("queryInput").value.trim();
+        if (!query) {
+          showError("Please enter a question!");
+          return;
+        }
+
+        // Start timer for total latency
+        const startTime = Date.now();
+
+        // Show initial status
+        showStatus("Analyzing question...");
+        updateStep(2);
+
+        // Hide all boxes except answer box
+        document.getElementById("classificationBox").classList.remove("show");
+        document.getElementById("documentsBox").classList.remove("show");
+        document.getElementById("rerankedBox").classList.remove("show");
+
+        try {
+          // STEP 1: Classify & Retrieve
+          const classifyResponse = await fetch("http://localhost:3000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: query }),
+          });
+
+          if (!classifyResponse.ok)
+            throw new Error(
+              `Classification failed: HTTP ${classifyResponse.status}`
+            );
+
+          const classifyData = await classifyResponse.json();
+          currentClassification = classifyData.classification;
+          currentDocuments = classifyData.sources || [];
+
+          const level = currentClassification.level;
+          const subject = currentClassification.subject;
+
+          // Show tier-based thinking message
+          let thinkingMessage = "Thinking...";
+          if (level === "intermediate") {
+            thinkingMessage = "Thinking harder...";
+          } else if (level === "advanced") {
+            thinkingMessage = "Thinking deeply...";
+          }
+          showStatus(thinkingMessage);
+
+          // STEP 2: Rerank
+          updateStep(3);
+
+          const rerankResponse = await fetch("http://localhost:3000/rerank", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              documents: currentDocuments,
+              topK: 3,
+            }),
+          });
+
+          if (!rerankResponse.ok)
+            throw new Error(`Reranking failed: HTTP ${rerankResponse.status}`);
+
+          const rerankData = await rerankResponse.json();
+          rerankedDocuments = rerankData.results || [];
+
+          // Show subject-specific action message
+          let actionMessage = "Preparing response...";
+          if (subject === "math") {
+            actionMessage = "Solving the problem...";
+          } else if (subject === "reasoning") {
+            actionMessage = "Working through the logic...";
+          } else if (subject === "science") {
+            actionMessage = "Analyzing the concepts...";
+          } else if (subject === "history") {
+            actionMessage = "Researching historical context...";
+          } else if (subject === "english_grammar") {
+            actionMessage = "Checking grammar rules...";
+          }
+          showStatus(actionMessage);
+
+          // STEP 3: Evaluate with Streaming
+          updateStep(4);
+
+          const topDoc = rerankedDocuments[0];
+          const docsForEval = [
+            {
+              id: topDoc.id,
+              text: topDoc.text,
+              metadata: topDoc.metadata || {},
+              score: topDoc.reranked_score,
+            },
+          ];
+
+          // Show answer box
+          document.getElementById("answerBox").classList.add("show");
+          const intent = currentClassification.intent || "factual_retrieval";
+          document.getElementById("answerIntent").textContent = intent;
+
+          // Clear previous content
+          const answerContent = document.getElementById("answerContent");
+          answerContent.textContent = "";
+
+          // Stream the response
+          const response = await fetch(
+            "http://localhost:3000/evaluate/stream",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userQuery: query,
+                classification: currentClassification,
+                documents: docsForEval,
+                userSubscription: "free",
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Streaming failed: HTTP ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let isFirstToken = true;
+
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.type === "token") {
+                    // Hide status box when first token arrives
+                    if (isFirstToken) {
+                      hideStatus();
+                      isFirstToken = false;
+                    }
+
+                    // Append all tokens (status messages no longer sent as tokens)
+                    const content = data.content;
+                    answerContent.textContent += content;
+                    answerContent.scrollTop = answerContent.scrollHeight;
+                  } else if (data.type === "metadata") {
+                    // Handle status messages from metadata
+                    if (data.content && data.content.status) {
+                      showStatus(data.content.status);
+                    }
+                  } else if (data.type === "complete") {
+                    hideStatus();
+
+                    if (data.content.success) {
+                      const totalLatency = Date.now() - startTime;
+
+                      // Display model info + TOTAL latency
+                      document.getElementById("modelUsed").textContent =
+                        data.content.data.modelUsed;
+                      document.getElementById("modelLevel").textContent =
+                        data.content.data.levelUsed;
+                      document.getElementById("latency").textContent =
+                        `${totalLatency}ms`;
+
+                      showSuccess(`Answer complete! (${totalLatency}ms)`);
+
+                      console.log(
+                        `[Quick Answer] Total latency: ${totalLatency}ms`
+                      );
+                      console.log(
+                        `[Quick Answer] Model: ${data.content.data.modelUsed} (${data.content.data.levelUsed})`
+                      );
+                    } else {
+                      showError(data.content.message || "Quick answer failed");
+                    }
+                  } else if (data.type === "error") {
+                    hideStatus();
+                    showError(`Error: ${data.content.message}`);
+                  }
+                } catch (e) {
+                  console.warn("Failed to parse SSE data:", line);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          hideStatus();
+          showError(`Quick answer failed: ${error.message}`);
+        }
+      }
+
+      // Initialize
+      updateStep(1);
+      console.log("AI Tutor Pipeline loaded");
+    </script>
+  </body>
+</html>

@@ -1,19 +1,17 @@
-import { ChatRequest, AITutorResponse, Classification, Document, CacheEntry } from '../types/index.js';
+import { ChatRequest, AITutorResponse, Classification, Document } from '../types/index.js';
 import { Classifier } from '../classifier/Classifier.js';
-import { SemanticCache } from '../cache/SemanticCache.js';
-import { UpstashRetriever } from '../retriever/UpstashRetriever.js';
-import { Reranker } from '../reranker/Reranker.js';
+import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
+import { Reranker } from '../reranker/Reranker.js';
 import { webSearchTool } from '../tools/webSearch.js';
-import { buildTutorPrompt } from '../utils/promptTemplates.js';
+import { EvaluatePrompt, EvaluatePromptInput, EvaluatePromptOutput } from '../prompts/evaluatorPrompt.js';
 import pino from 'pino';
 
-// --- Hardcoded user preferences for demo ---
 const USER_PREFS = {
   language: 'en',
   exam: 'SSC_CGL_2025',
   tutorStyle: 'concise, step-by-step, exam-oriented',
-  verification: 'Always verify math and reasoning answers. If unsure, say so.',
+  verification: 'Always verify math and reasoning answers.',
 };
 
 export interface StreamingHandlers {
@@ -23,322 +21,380 @@ export interface StreamingHandlers {
   onError: (error: Error) => void;
 }
 
-/**
- * Main LangChain-based Tutor Chain that orchestrates the entire AI tutoring flow
- */
 export class TutorChain {
   private classifier: Classifier;
-  private cache: SemanticCache;
-  private retriever: UpstashRetriever;
-  private reranker: Reranker;
+  private retriever: AWSKnowledgeBaseRetriever;
   private modelSelector: ModelSelector;
+  private reranker: Reranker;
+  private evaluatePrompt: EvaluatePrompt;
   private logger: pino.Logger;
 
   constructor(
     classifier: Classifier,
-    cache: SemanticCache,
-    retriever: UpstashRetriever,
-    reranker: Reranker,
+    retriever: AWSKnowledgeBaseRetriever,
     modelSelector: ModelSelector,
+    reranker: Reranker,
     logger: pino.Logger
   ) {
     this.classifier = classifier;
-    this.cache = cache;
     this.retriever = retriever;
-    this.reranker = reranker;
     this.modelSelector = modelSelector;
+    this.reranker = reranker;
     this.logger = logger;
+    this.evaluatePrompt = new EvaluatePrompt(modelSelector, logger);
   }
 
   /**
-   * Main execution method - implements full AI tutor flow
+   * Core retrieval logic - shared by both streaming and non-streaming
+   * ALWAYS tries web search as fallback when KB has no results
+   * Bypasses reranking if no documents are retrieved
    */
-  private async execute(request: ChatRequest): Promise<AITutorResponse> {
-    this.logger.info(`Processing tutor request: ${request.message.substring(0, 100)}...`);
+  private async retrieveDocuments(
+    query: string,
+    classification: Classification,
+    onProgress?: (message: string) => void
+  ): Promise<Document[]> {
+    const isAcademicSubject = this.isAcademicSubject(classification.subject);
+    const isCurrentAffairs =
+      classification.subject === 'current_affairs' ||
+      classification.subject === 'general_knowledge';
 
-    // 1. Classification
-    const classification = await this.classifyQuery(request);
-    this.logger.info(`Query classified as: ${classification.subject}/${classification.level}`);
+    let retrievedDocs: Document[] = [];
 
-    // 2. Cache Layer: Exact match
-    const cacheKey = this.cache.generateKey(request.message, classification.subject, USER_PREFS.language);
-    const exactCache = await this.cache.lookupByKey(cacheKey);
-    if (exactCache) {
-      this.logger.info('Exact cache hit');
-      return {
-        answer: exactCache.response,
-        sources: [],
-        classification,
-        cached: true,
-        confidence: 0.98
-      };
-    }
-
-    // 3. Semantic Cache (vector similarity)
-    // (Assume embedder is available in cache or injected)
-    let semanticCacheHit: CacheEntry | null = null;
-    let semanticCacheSim = 0;
-    if (this.cache.lookupByEmbedding) {
-      const semResult = await this.cache.lookupByEmbedding(request.message, classification.subject, USER_PREFS.language);
-      if (semResult && semResult.similarity >= 0.94 && semResult.entry) {
-        this.logger.info('Semantic cache strong hit');
-        return {
-          answer: semResult.entry.response,
-          sources: [],
-          classification,
-          cached: true,
-          confidence: 0.95
-        };
+    // ROUTE 1: Current affairs - go straight to web search
+    if (isCurrentAffairs) {
+      this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
+      onProgress?.('🌐 Searching the web for latest information...\\n');
+      retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+      
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain] Web search returned no results - will bypass reranking');
       }
-      if (semResult && semResult.similarity >= 0.82 && semResult.entry) {
-        semanticCacheHit = semResult.entry;
-        semanticCacheSim = semResult.similarity;
-        this.logger.info('Semantic cache soft hit, using as context seed');
-      }
+      
+      return retrievedDocs;
     }
 
-    // 4. Retrieval: Knowledge base, Upstash, user/teacher notes
-    const retrievalTasks: Promise<Document[]>[] = [
-      this.retriever.getRelevantDocuments(request.message, {
-        subject: classification.subject,
-        level: classification.level,
-        k: 8
-      })
-    ];
-    // TODO: Add Bedrock KB, user/teacher notes, etc.
-
-    // If semantic cache soft hit, use as context
-    if (semanticCacheHit) {
-      retrievalTasks.push(Promise.resolve([{
-        id: 'cache-soft-hit',
-        text: semanticCacheHit.response,
-        metadata: { source: 'semantic-cache', sim: semanticCacheSim }
-      }]));
-    }
-
-    // Web search fallback if needed
-    if (classification.subject === 'current_affairs' || this.needsWebSearch(request.message)) {
-      retrievalTasks.push(this.performWebSearch(request.message));
-    }
-
-    // Merge and rank all retrieved docs
-    const retrievalResults = await Promise.allSettled(retrievalTasks);
-    let allDocs: Document[] = [];
-    retrievalResults.forEach(r => {
-      if (r.status === 'fulfilled') allDocs.push(...r.value);
-    });
-
-    // 5. Rerank with cross-encoder
-    let reranked: Document[] = [];
-    if (allDocs.length > 0) {
-      const rerankResults = await this.reranker.rerank(allDocs, request.message, 5);
-      reranked = rerankResults.filter(r => r.score >= 0.5).map(r => r.document);
-      // Fallback to web search if reranker confidence is low
-      if (rerankResults.length && rerankResults[0].score < 0.8) {
-        this.logger.info('Low reranker confidence, adding web search');
-        const webDocs = await this.performWebSearch(request.message);
-        reranked = reranked.concat(webDocs);
-      }
-    }
-
-    // 6. Compose prompt
-    const prompt = buildTutorPrompt(
-      request,
-      classification,
-      reranked,
-      USER_PREFS
-    );
-
-    // 7. Model selection (leave as is for now)
-    const llm = await this.modelSelector.getLLM(classification, request.userSubscription);
-
-    // 8. Generate answer (streaming not used here)
-    const response = await llm.generate(prompt);
-
-    // 9. Cache result
-    await this.cache.upsert(request.message, response, {
+    // ROUTE 2 & 3: Try KB first, fallback to web search if needed
+    this.logger.info('[TutorChain] Route: Knowledge Base');
+    onProgress?.('📖 Searching knowledge base...\\n');
+    
+    retrievedDocs = await this.retriever.getRelevantDocuments(query, {
       subject: classification.subject,
       level: classification.level,
-      language: USER_PREFS.language
+      k: 5,
     });
 
-    return {
-      answer: response,
-      sources: reranked,
-      classification,
-      cached: false,
-      confidence: 0.85
-    };
+    const topScore =
+      retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
+        ? retrievedDocs[0].score
+        : 0;
+
+    const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
+
+    // ALWAYS fallback to web search if KB fails or has low relevance
+    if (shouldFallback) {
+      const reason =
+        retrievedDocs.length === 0
+          ? 'KB empty'
+          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+
+      this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
+      onProgress?.(
+        `${
+          retrievedDocs.length === 0
+            ? ' No KB results found'
+            : ` Low relevance (${(topScore * 100).toFixed(1)}%)`
+        }\\n🌐 Searching the web instead...\\n`
+      );
+      
+      const webDocs = await webSearchTool(query, classification.subject, this.logger);
+      
+      if (webDocs.length > 0) {
+        retrievedDocs = webDocs;
+        this.logger.info(
+          { count: webDocs.length },
+          '[TutorChain] Web search fallback successful'
+        );
+      } else {
+        this.logger.warn('[TutorChain] Web search fallback also returned no results - will bypass reranking');
+      }
+    }
+
+    return retrievedDocs;
   }
 
   /**
-   * Streaming execution for real-time responses
+   * Main execution method (classification + retrieval)
    */
-  async runStreaming(request: ChatRequest, handlers: StreamingHandlers): Promise<void> {
+  private async execute(request: ChatRequest): Promise<AITutorResponse> {
+    this.logger.info(
+      { query: request.message.substring(0, 100) },
+      '[TutorChain] Processing query'
+    );
+
     try {
-      handlers.onToken('[Starting AI Tutor...]');
-
-      // 1. Classification
+      // STEP 1: Classification
       const classification = await this.classifyQuery(request);
-      handlers.onMetadata({ classification, step: 'classification' });
 
-      // 2. Cache Layer: Exact match
-      const cacheKey = this.cache.generateKey(request.message, classification.subject, USER_PREFS.language);
-      const exactCache = await this.cache.lookupByKey(cacheKey);
-      if (exactCache) {
-        handlers.onToken(exactCache.response);
-        handlers.onComplete({
-          answer: exactCache.response,
-          sources: [],
-          classification,
-          cached: true,
-          confidence: 0.98
-        });
-        return;
-      }
-
-      // 3. Semantic Cache (vector similarity)
-      let semanticCacheHit: CacheEntry | null = null;
-      let semanticCacheSim = 0;
-      if (this.cache.lookupByEmbedding) {
-        const semResult = await this.cache.lookupByEmbedding(request.message, classification.subject, USER_PREFS.language);
-        if (semResult && semResult.similarity >= 0.94 && semResult.entry) {
-          handlers.onToken(semResult.entry.response);
-          handlers.onComplete({
-            answer: semResult.entry.response,
-            sources: [],
-            classification,
-            cached: true,
-            confidence: 0.95
-          });
-          return;
-        }
-        if (semResult && semResult.similarity >= 0.82 && semResult.entry) {
-          semanticCacheHit = semResult.entry;
-          semanticCacheSim = semResult.similarity;
-          handlers.onMetadata({ semanticCacheSim, step: 'semantic-cache-soft' });
-        }
-      }
-
-      // 4. Retrieval
-      handlers.onToken('[Retrieving context...]');
-      const retrievalTasks: Promise<Document[]>[] = [
-        this.retriever.getRelevantDocuments(request.message, {
+      this.logger.info(
+        {
           subject: classification.subject,
-          level: classification.level,
-          k: 8
-        })
-      ];
-      if (semanticCacheHit) {
-        retrievalTasks.push(Promise.resolve([{
-          id: 'cache-soft-hit',
-          text: semanticCacheHit.response,
-          metadata: { source: 'semantic-cache', sim: semanticCacheSim }
-        }]));
-      }
-      if (classification.subject === 'current_affairs' || this.needsWebSearch(request.message)) {
-        retrievalTasks.push(this.performWebSearch(request.message));
-      }
-      const retrievalResults = await Promise.allSettled(retrievalTasks);
-      let allDocs: Document[] = [];
-      retrievalResults.forEach(r => {
-        if (r.status === 'fulfilled') allDocs.push(...r.value);
-      });
-
-      // 5. Rerank
-      let reranked: Document[] = [];
-      if (allDocs.length > 0) {
-        const rerankResults = await this.reranker.rerank(allDocs, request.message, 5);
-        reranked = rerankResults.filter(r => r.score >= 0.5).map(r => r.document);
-        if (rerankResults.length && rerankResults[0].score < 0.8) {
-          handlers.onToken('[Low confidence, adding web search]');
-          const webDocs = await this.performWebSearch(request.message);
-          reranked = reranked.concat(webDocs);
-        }
-      }
-      handlers.onMetadata({ sources: reranked.length, step: 'retrieval' });
-
-      // 6. Compose prompt
-      const prompt = buildTutorPrompt(
-        request,
-        classification,
-        reranked,
-        USER_PREFS
+          confidence: classification.confidence,
+          intent: (classification as any).intent,
+        },
+        '[TutorChain] Classification complete'
       );
 
-      // 7. Model selection (leave as is for now)
-      const llm = await this.modelSelector.getLLM(classification, request.userSubscription);
+      // STEP 2: Retrieve documents
+      const retrievedDocs = await this.retrieveDocuments(request.message, classification);
 
-      // 8. Streaming answer
-      let fullResponse = '';
-      await llm.stream(prompt, {
-        onToken: (token: string) => {
-          fullResponse += token;
-          handlers.onToken(token);
+      this.logger.info(
+        { sourcesCount: retrievedDocs.length },
+        '[TutorChain] Retrieval complete'
+      );
+
+      // Handle case when no documents are retrieved - bypass reranking
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain] No documents retrieved - bypassing reranking');
+        return {
+          answer: '',
+          sources: [],
+          classification,
+          cached: false,
+          confidence: classification.confidence,
+          metadata: {
+            stage: 'no_results',
+            message: 'No relevant information found. Try rephrasing your question or use a different query.',
+          },
+        };
+      }
+
+      // Return for UI to show rerank button
+      return {
+        answer: '',
+        sources: retrievedDocs,
+        classification,
+        cached: false,
+        confidence: classification.confidence,
+        metadata: {
+          stage: 'ready_for_reranking',
+          message: 'Click "Rerank Documents" to rank by relevance',
         },
-        onError: handlers.onError,
-        onComplete: async () => {
-          await this.cache.upsert(request.message, fullResponse, {
-            subject: classification.subject,
-            level: classification.level,
-            language: USER_PREFS.language
-          });
-          handlers.onComplete({
-            answer: fullResponse,
-            sources: reranked,
-            classification,
-            cached: false,
-            confidence: 0.85
-          });
-        }
-      });
-
+      };
     } catch (error) {
-      this.logger.error(error, 'Streaming tutor chain failed');
-      handlers.onError(error as Error);
+      this.logger.error(error, '[TutorChain] Error');
+      throw error;
     }
   }
 
+  /**
+   * STREAMING EVALUATE: Generate final response after reranking with streaming
+   * This is called when user clicks "Evaluate" button for streaming responses
+   */
+  async evaluateStreaming(
+    userQuery: string,
+    classification: Classification,
+    documents: Document[],
+    subscription: string = 'free',
+    callbacks: {
+      onToken: (token: string) => void;
+      onMetadata: (metadata: any) => void;
+      onComplete: (result: EvaluatePromptOutput) => void;
+      onError: (error: Error) => void;
+    }
+  ): Promise<void> {
+    this.logger.info(
+      {
+        query: userQuery.substring(0, 80),
+        subject: classification.subject,
+        confidence: classification.confidence,
+        docCount: documents.length,
+      },
+      '[TutorChain] Streaming evaluate step started'
+    );
+
+    try {
+      // Get top document as context
+      const topDocument = documents.length > 0 ? documents[0] : null;
+
+      this.logger.debug(
+        { hasTopDoc: !!topDocument },
+        '[TutorChain] Top document selected for streaming'
+      );
+
+      // Send initial metadata
+      callbacks.onMetadata({
+        step: 'preparation',
+        docCount: documents.length,
+        classification,
+      });
+
+      // Call EvaluatePrompt with streaming
+      const evaluateInput: EvaluatePromptInput = {
+        userQuery,
+        classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription,
+      };
+
+      await this.evaluatePrompt.evaluateStreaming(evaluateInput, callbacks);
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Streaming evaluate failed');
+      callbacks.onError(error as Error);
+    }
+  }
+
+  /**
+   * EVALUATE: Generate final response after reranking
+   * This is called when user clicks "Evaluate" button
+   */
+  async evaluate(
+    userQuery: string,
+    classification: Classification,
+    documents: Document[],
+    subscription?: string
+  ): Promise<EvaluatePromptOutput> {
+    this.logger.info(
+      {
+        query: userQuery.substring(0, 80),
+        subject: classification.subject,
+        confidence: classification.confidence,
+        docCount: documents.length,
+      },
+      '[TutorChain] Evaluate step started'
+    );
+
+    try {
+      // Get top document as shot
+      const topDocument = documents.length > 0 ? documents[0] : null;
+
+      this.logger.debug(
+        { hasTopDoc: !!topDocument },
+        '[TutorChain] Top document selected'
+      );
+
+      // Call EvaluatePrompt with all context
+      const evaluateInput: EvaluatePromptInput = {
+        userQuery,
+        classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription,
+      };
+
+      const output = await this.evaluatePrompt.evaluate(evaluateInput);
+
+      this.logger.info(
+        {
+          modelUsed: output.modelUsed,
+          levelUsed: output.levelUsed,
+          latency: output.latency,
+          answerLength: output.answer.length,
+        },
+        '[TutorChain] Evaluate complete'
+      );
+
+      return output;
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Evaluate failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Check if subject is academic
+   */
+  private isAcademicSubject(subject: string): boolean {
+    const academicSubjects = [
+      'math',
+      'science',
+      'history',
+      'literature',
+      'reasoning',
+      'english_grammer',
+    ];
+    return academicSubjects.includes(subject);
+  }
+
+  /**
+   * Public run method
+   */
   async run(request: ChatRequest): Promise<AITutorResponse> {
     return this.execute(request);
   }
 
+  /**
+   * Streaming version
+   */
+  async runStreaming(request: ChatRequest, handlers: StreamingHandlers): Promise<void> {
+    try {
+      handlers.onToken('[AI Tutor]\\n');
+      handlers.onToken('Analyzing your question...\\n\\n');
+
+      const classification = await this.classifyQuery(request);
+      handlers.onMetadata({ classification, step: 'classification' });
+      handlers.onToken(
+        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}% confidence)\\n`
+      );
+
+      const retrievedDocs = await this.retrieveDocuments(
+        request.message,
+        classification,
+        (message) => handlers.onToken(message)
+      );
+
+      handlers.onMetadata({ sources: retrievedDocs.length, step: 'retrieval' });
+      handlers.onToken(`Found ${retrievedDocs.length} relevant sources\\n\\n`);
+
+      // Handle case when no documents are retrieved - bypass reranking
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain-Stream] No documents retrieved - bypassing reranking');
+        handlers.onComplete({
+          answer: '',
+          sources: [],
+          classification,
+          cached: false,
+          confidence: classification.confidence,
+          metadata: {
+            stage: 'no_results',
+            message: 'No relevant information found. Try rephrasing your question or use a different query.',
+          },
+        });
+        return;
+      }
+
+      handlers.onComplete({
+        answer: '',
+        sources: retrievedDocs,
+        classification,
+        cached: false,
+        confidence: classification.confidence,
+        metadata: {
+          stage: 'ready_for_reranking',
+          message: 'Click "Rerank Documents" to rank by relevance',
+        },
+      });
+
+      this.logger.info('[TutorChain-Stream] Complete');
+    } catch (error) {
+      this.logger.error(error, '[TutorChain-Stream] Error');
+      handlers.onError(error as Error);
+    }
+  }
+
+  /**
+   * Private classification logic
+   */
   private async classifyQuery(request: ChatRequest): Promise<Classification> {
     if (request.subject && request.level) {
       return {
         subject: request.subject,
         level: request.level as 'basic' | 'intermediate' | 'advanced',
-        confidence: 1.0
+        confidence: 1.0,
       };
     }
+
     return await this.classifier.classify(request.message);
-  }
-
-  private needsWebSearch(query: string): boolean {
-    const webSearchKeywords = [
-      'latest', 'recent', 'current', 'news', 'today', 'now',
-      '2024', '2025', 'happening', 'update'
-    ];
-    const queryLower = query.toLowerCase();
-    return webSearchKeywords.some(keyword => queryLower.includes(keyword));
-  }
-
-  private async performWebSearch(query: string): Promise<Document[]> {
-    try {
-      const webResults = await webSearchTool(query);
-      return webResults.map((result, index) => ({
-        id: `web-${index}`,
-        text: `${result.title}: ${result.snippet}`,
-        metadata: {
-          source: 'web',
-          url: result.url,
-          title: result.title,
-          relevance: result.relevance || 0.5
-        }
-      }));
-    } catch (error) {
-      this.logger.warn(error, 'Web search failed');
-      return [];
-    }
   }
 }

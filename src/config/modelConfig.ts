@@ -1,6 +1,5 @@
 import { TutorConfig, ModelConfig, Classification, ModelRegistryEntry } from '../types/index.js';
 import { config } from 'dotenv';
-
 config();
 
 // Enhanced model configuration based on your provided config
@@ -14,23 +13,22 @@ export const tutorConfigData: TutorConfig = {
     },
     "basic": {
       "description": "Balanced cost/quality — use mid-tier models like claude-3.5 or small Bedrock models.",
-      "preferredModels": ["anthropic.claude-3-sonnet-20240229-v1:0", "openai.gpt-oss-20b-1:0"],
+      "preferredModels": ["anthropic.claude-3-sonnet-20240229-v1:0", "anthropic.claude-sonnet-4-20250514-v1:0"],
       "maxTokensMultiplier": 1.0
     },
     "premium": {
       "description": "Higher quality — use stronger models for final verification and complex reasoning.",
-      "preferredModels": ["anthropic.claude-3-5-sonnet-20241022-v2:0", "openai.gpt-oss-120b-1:0"],
+      "preferredModels": ["anthropic.claude-3-5-sonnet-20241022-v2:0", "anthropic.claude-sonnet-4-20250514-v1:0"],
       "maxTokensMultiplier": 1.3
     }
   },
   "modelRegistry": {
     "gpt-3.5-turbo": { "bedrockId": "gpt-3.5-turbo", "invokeId": "gpt-3.5-turbo", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:178549791789:inference-profile/apac.amazon.nova-micro-v1:0", "region": "ap-south-1" },
-    "amazon.rerank-v1:0": { "bedrockId": "amazon.rerank-v1:0", "invokeId": "amazon.rerank-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "openai.gpt-oss-20b-1:0": { "bedrockId": "openai.gpt-oss-20b-1:0", "invokeId": "openai.gpt-oss-20b-1:0", "inferenceProfileArn": null, "region": "ap-south-1" },
-    "openai.gpt-oss-120b-1:0": { "bedrockId": "openai.gpt-oss-120b-1:0", "invokeId": "openai.gpt-oss-120b-1:0", "inferenceProfileArn": null, "region": "ap-south-1" }
+    "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.amazon.nova-micro-v1:0", "region": "ap-south-1" },
+    "amazon.rerank-v1:0": { "bedrockId": "cohere.rerank-v3-5:0", "invokeId": "cohere.rerank-v3-5:0", "inferenceProfileArn": "arn:aws:bedrock:region::foundation-model/amazon.rerank-v1:0", "region": "ap-south-1" },
+    "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-sonnet-20240229-v1:0", "region": "ap-south-1" },
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0", "region": "ap-south-1" },
+    "anthropic.claude-sonnet-4-20250514-v1:0": { "bedrockId": "anthropic.claude-sonnet-4-20250514-v1:0", "invokeId": "anthropic.claude-sonnet-4-20250514-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-sonnet-4-20250514-v1:0", "region": "ap-south-1" }
   },
   "classifier": {
     "modelId": "amazon.nova-micro-v1:0",
@@ -63,7 +61,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Detailed answer with citations and short summary."
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-20b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1600,
         "temperature": 0.0,
         "systemPrompt": "You are an expert tutor. Provide authoritative, citation-backed answers, check reasoning, and flag uncertainty.",
@@ -86,7 +84,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Detailed steps + verification"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-120b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 2000,
         "temperature": 0.0,
         "systemPrompt": "You are an expert mathematician. Provide proofs, derivations, and verify via computation where applicable.",
@@ -109,7 +107,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Reasoned steps + verified conclusion"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-120b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1600,
         "temperature": 0.0,
         "systemPrompt": "You are an expert reasoner. Provide rigorous reasoning and indicate confidence and sources.",
@@ -132,7 +130,7 @@ export const tutorConfigData: TutorConfig = {
         "outputFormat": "Corrected text + explanation"
       },
       "advanced": {
-        "modelId": "openai.gpt-oss-20b-1:0",
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
         "maxTokens": 1200,
         "temperature": 0.0,
         "systemPrompt": "You are an expert English linguist. Provide authoritative corrections, alternatives, and style notes.",
@@ -141,13 +139,13 @@ export const tutorConfigData: TutorConfig = {
     },
     "science": {
       "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a science tutor. Keep explanations simple and factual.", "outputFormat": "Answer + simple explanation" },
-      "intermediate": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a science assistant. Provide sourced explanations and reasoning.", "outputFormat": "Answer + citations" },
-      "advanced": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert scientist. Provide thorough explanations, citations, and confidence.", "outputFormat": "Detailed answer + citations" }
+      "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a science assistant. Provide sourced explanations and reasoning.", "outputFormat": "Answer + citations" },
+      "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert scientist. Provide thorough explanations, citations, and confidence.", "outputFormat": "Detailed answer + citations" }
     },
     "history": {
       "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a history tutor. Provide concise historical facts and timelines.", "outputFormat": "Facts + timeline" },
-      "intermediate": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
-      "advanced": { "modelId": "openai.gpt-oss-20b-1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
+      "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
+      "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
     }
   }
 };
@@ -188,6 +186,205 @@ export const appConfig = {
   
   serpapi: {
     key: process.env.SERPAPI_KEY,
+  }
+};
+
+/**
+ * Classification Configuration - Subject Keywords and Intent Patterns
+ * Used by Classifier for heuristic fallback when LLM is unavailable
+ */
+export const classificationConfig = {
+  /**
+   * Subject keyword matching configuration
+   */
+  subjectKeywords: {
+    math: {
+      keywords: [
+        'math', 'equation', 'integral', 'derivative', 'algebra', 'calculus',
+        'geometry', 'trigonometry', 'sine', 'cosine', 'tangent', 'sin', 'cos', 'tan',
+        'arithmetic', 'number', 'calculate', 'solve', 'sum', 'difference', 'product',
+        'quotient', 'fraction', 'decimal', 'percentage', 'ratio', 'proportion',
+        'angle', 'triangle', 'circle', 'square', 'polynomial', 'logarithm',
+        'exponent', 'power', 'root', 'sqrt', 'function', 'graph', 'plot',
+        'matrix', 'vector', 'statistics', 'probability', 'mean', 'median',
+        'permutation', 'combination', 'factorial', 'random', 'expected',
+        'variance', 'standard deviation', 'distribution', 'sample'
+      ],
+      symbols: ['+', '-', '*', '/', '=', '√', 'π', '∫', '∑', '^', '²', '³']
+    },
+    science: {
+      keywords: [
+        'physics', 'chemistry', 'biology', 'atom', 'molecule', 'cell', 'organism',
+        'photosynthesis', 'respiration', 'mitosis', 'meiosis', 'dna', 'rna',
+        'protein', 'enzyme', 'reaction', 'element', 'compound', 'periodic table',
+        'energy', 'force', 'motion', 'velocity', 'acceleration', 'gravity',
+        'electricity', 'magnetism', 'light', 'sound', 'wave', 'quantum',
+        'ecosystem', 'evolution', 'species', 'genetic', 'nucleus', 'electron',
+        'proton', 'neutron', 'chemical', 'organic', 'inorganic', 'catalyst'
+      ],
+      symbols: ['CO2', 'H2O', 'O2', 'N2', 'H+', 'pH']
+    },
+    english_grammar: {
+      keywords: [
+        'grammar', 'sentence', 'verb', 'noun', 'adjective', 'adverb', 'pronoun',
+        'punctuation', 'comma', 'period', 'semicolon', 'apostrophe', 'quotation',
+        'subject', 'predicate', 'clause', 'phrase', 'tense', 'past', 'present',
+        'future', 'plural', 'singular', 'possessive', 'article', 'conjunction',
+        'preposition', 'interjection', 'syntax', 'spelling', 'capitalization',
+        'gerund', 'participle', 'infinitive', 'modal', 'passive', 'active'
+      ],
+      symbols: [] 
+    },
+    history: {
+      keywords: [
+        'history', 'war', 'ancient', 'civilization', 'empire', 'dynasty', 'king',
+        'queen', 'battle', 'revolution', 'independence', 'colonial', 'century',
+        'bc', 'ad', 'medieval', 'renaissance', 'industrial', 'world war',
+        'treaty', 'constitution', 'democracy', 'monarchy', 'republic', 'slavery',
+        'conquest', 'explorer', 'discovery', 'invention', 'historical',
+        'emperor', 'pharaoh', 'sultan', 'kingdom', 'reign', 'throne',
+        'mughal', 'ottoman', 'roman', 'persian', 'greek', 'egyptian',
+        'historical event', 'timeline', 'era', 'period', 'age'
+      ],
+      symbols: []
+    },
+    literature: {
+      keywords: [
+        'literature', 'novel', 'poem', 'poetry', 'author', 'writer', 'book',
+        'shakespeare', 'dickens', 'twain', 'hemingway', 'fiction', 'nonfiction',
+        'character', 'plot', 'theme', 'metaphor', 'simile', 'irony', 'symbolism',
+        'genre', 'narrative', 'prose', 'verse', 'stanza', 'rhyme', 'literary',
+        'protagonist', 'antagonist', 'tragedy', 'comedy', 'drama'
+      ],
+      symbols: []
+    },
+    reasoning: {
+      keywords: [
+        'logic', 'reason', 'deduce', 'infer', 'puzzle', 'riddle', 'paradox',
+        'syllogism', 'premise', 'conclusion', 'argument', 'fallacy', 'valid',
+        'invalid', 'consistent', 'inconsistent', 'contradict', 'imply',
+        'if then', 'therefore', 'because', 'assume', 'suppose', 'given that',
+        'strategy', 'game', 'winning', 'optimal', 'player', 'move', 'turn',
+        'alternately', 'coins', 'stones', 'pile', 'heavier', 'lighter', 'identical',
+        'nim', 'mastermind', 'cryptarithmetic', 'weighing', 'probability',
+        'random', 'chosen', 'flipped', 'conditional probability', 'bayes',
+        'expected value', 'outcomes', 'sample space', 'event'
+      ],
+      symbols: ['→', '∴', '∵', '∀', '∃']
+    },
+    current_affairs: {
+      keywords: [
+        'news', 'recent', 'current', 'today', 'latest', 'yesterday', '2024', '2025',
+        'political', 'election', 'government', 'policy', 'economic', 'market',
+        'covid', 'pandemic', 'climate', 'technology', 'ai', 'social media',
+        'trending', 'viral', 'breaking', 'announcement'
+      ],
+      symbols: []
+    },
+    general_knowledge: {
+      keywords: [
+        'what is', 'who is', 'where is', 'when did', 'define', 'meaning',
+        'capital', 'country', 'continent', 'planet', 'largest', 'smallest',
+        'fastest', 'tallest', 'oldest', 'inventor', 'discovery', 'fact'
+      ],
+      symbols: []
+    }
+  },
+
+  /**
+   * Intent detection patterns
+   */
+  intentPatterns: {
+    factual_retrieval: [
+      'what is', 'who is', 'where is', 'when', 'how long', 'how many',
+      'define', 'meaning', 'what are', 'list', 'name', 'identify',
+      'what does', 'capital of', 'country', 'continent'
+    ],
+    step_by_step_explanation: [
+      'how to', 'steps', 'process', 'procedure', 'explain how',
+      'solve', 'calculate', 'find', 'derive', 'prove',
+      'show me', 'work through', 'walk me'
+    ],
+    comparative_analysis: [
+      'compare', 'contrast', 'difference between', 'vs', 'versus',
+      'similarities', 'differences', 'which is', 'better', 'advantage'
+    ],
+    problem_solving: [
+      'problem', 'puzzle', 'riddle', 'challenge', 'figure out',
+      'resolve', 'answer', 'solution', 'help with'
+    ],
+    reasoning_puzzle: [
+      'why', 'reason', 'logic', 'because', 'cause', 'effect',
+      'what if', 'suppose', 'assume', 'imply', 'deduce'
+    ],
+    verification_check: [
+      'correct', 'right', 'wrong', 'check', 'verify', 'is this',
+      'am i right', 'is this correct', 'validate'
+    ]
+  },
+
+  /**
+   * Level detection indicators
+   */
+  levelIndicators: {
+    advanced: [
+      // Formal/rigorous keywords
+      'prove', 'proof', 'theorem', 'derivation', 'derive', 'rigorous',
+      'formalize', 'formal', 'axiom', 'lemma', 'corollary',
+      
+      // Research/academic keywords
+      'complex analysis', 'advanced', 'research', 'dissertation',
+      'sophisticated', 'intricate', 'elaborate', 'comprehensive study',
+      
+      // Mathematical complexity
+      'infinitely', 'infinite', 'convergence', 'divergence', 'asymptotic',
+      'characterize', 'generalize', 'abstract', 'canonical',
+      
+      // Logic & reasoning
+      'formalize', 'characterize', 'minimal', 'necessary and sufficient',
+      'if and only if', 'iff', 'contrapositive', 'contradiction',
+      
+      // Complexity indicators
+      'multiple constraints', 'optimize', 'minimize', 'maximize',
+      'given arbitrary', 'for all', 'there exists', 'such that'
+    ],
+    intermediate: [
+      'compare', 'contrast', 'explain', 'analyze', 'describe', 'discuss',
+      'why', 'how does', 'what is the difference', 'steps', 'process',
+      'relationship', 'connection', 'cause', 'effect', 'evaluate',
+      'examine', 'interpret', 'illustrate', 'demonstrate', 'calculate',
+      'solve', 'find', 'determine'
+    ],
+    basic: [
+      'what is', 'define', 'who is', 'where is', 'when', 'list',
+      'name', 'identify', 'state', 'what are', 'simple', 'basic',
+      'tell me', 'give me'
+    ]
+  },
+
+  /**
+   * Subject mapping for non-standard LLM responses
+   */
+  subjectMapping: {
+    'reasoning_puzzle': 'reasoning',
+    'logic_puzzle': 'reasoning',
+    'game_theory': 'reasoning',
+    'english': 'english_grammar',
+    'english_grammer': 'english_grammar',
+    'language': 'english_grammar',
+    'grammar': 'english_grammar'
+  },
+
+  /**
+   * Expected format templates by intent
+   */
+  expectedFormats: {
+    factual_retrieval: 'Direct answer with bullet points or concise explanation',
+    step_by_step_explanation: 'Numbered steps with explanations and final answer (LaTeX for math)',
+    comparative_analysis: 'Markdown table or structured comparison with key differences',
+    problem_solving: 'Problem breakdown → approach → detailed solution → verification',
+    reasoning_puzzle: 'Logical reasoning steps with clear conclusions',
+    verification_check: 'Yes/No answer with explanation and corrections if needed'
   }
 };
 
@@ -265,6 +462,13 @@ export class ModelConfigService {
   getPreferredModels(userSubscription: string): string[] {
     const plan = this.tutorConfig.plans[userSubscription] || this.tutorConfig.plans[this.tutorConfig.defaultSubscription];
     return plan.preferredModels;
+  }
+
+  /**
+   * Get classification configuration (subject keywords, intent patterns, etc.)
+   */
+  getClassificationConfig() {
+    return classificationConfig;
   }
 }
 
