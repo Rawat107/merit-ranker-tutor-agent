@@ -46,6 +46,8 @@ export class TutorChain {
 
   /**
    * Core retrieval logic - shared by both streaming and non-streaming
+   * ALWAYS tries web search as fallback when KB has no results
+   * Bypasses reranking if no documents are retrieved
    */
   private async retrieveDocuments(
     query: string,
@@ -59,73 +61,62 @@ export class TutorChain {
 
     let retrievedDocs: Document[] = [];
 
+    // ROUTE 1: Current affairs - go straight to web search
     if (isCurrentAffairs) {
       this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-      onProgress?.('Searching web...\\n');
+      onProgress?.('🌐 Searching the web for latest information...\\n');
       retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
-    } else if (isAcademicSubject) {
-      this.logger.info('[TutorChain] Route: Knowledge Base (Academic)');
-      onProgress?.('Searching knowledge base...\\n');
-      retrievedDocs = await this.retriever.getRelevantDocuments(query, {
-        subject: classification.subject,
-        level: classification.level,
-        k: 5,
-      });
-
-      const topScore =
-        retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
-          ? retrievedDocs[0].score
-          : 0;
-
-      const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
-
-      if (shouldFallback) {
-        const reason =
-          retrievedDocs.length === 0
-            ? 'KB empty'
-            : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
-
-        this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
-        onProgress?.(
-          `${
-            retrievedDocs.length === 0
-              ? 'No KB results'
-              : `Low relevance (${(topScore * 100).toFixed(1)}%)`
-          }, trying web search...\\n`
-        );
-        retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+      
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain] Web search returned no results - will bypass reranking');
       }
-    } else {
-      this.logger.info('[TutorChain] Route: Knowledge Base (General)');
-      onProgress?.('Searching knowledge base...\\n');
-      retrievedDocs = await this.retriever.getRelevantDocuments(query, {
-        subject: classification.subject,
-        level: classification.level,
-        k: 5,
-      });
+      
+      return retrievedDocs;
+    }
 
-      const topScore =
-        retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
-          ? retrievedDocs[0].score
-          : 0;
+    // ROUTE 2 & 3: Try KB first, fallback to web search if needed
+    this.logger.info('[TutorChain] Route: Knowledge Base');
+    onProgress?.('📖 Searching knowledge base...\\n');
+    
+    retrievedDocs = await this.retriever.getRelevantDocuments(query, {
+      subject: classification.subject,
+      level: classification.level,
+      k: 5,
+    });
 
-      const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
+    const topScore =
+      retrievedDocs.length > 0 && retrievedDocs[0]?.score !== undefined
+        ? retrievedDocs[0].score
+        : 0;
 
-      if (shouldFallback) {
-        const reason =
+    const shouldFallback = retrievedDocs.length === 0 || topScore < 0.5;
+
+    // ALWAYS fallback to web search if KB fails or has low relevance
+    if (shouldFallback) {
+      const reason =
+        retrievedDocs.length === 0
+          ? 'KB empty'
+          : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
+
+      this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
+      onProgress?.(
+        `${
           retrievedDocs.length === 0
-            ? 'KB empty'
-            : `KB relevance too low (${(topScore * 100).toFixed(1)}%)`;
-
-        this.logger.warn(`[TutorChain] ${reason}, falling back to web search`);
-        onProgress?.(
-          `${
-            retrievedDocs.length === 0
-              ? 'No KB results'
-              : `Low relevance (${(topScore * 100).toFixed(1)}%)`
-          }, trying web search...\\n`
+            ? ' No KB results found'
+            : ` Low relevance (${(topScore * 100).toFixed(1)}%)`
+        }\\n🌐 Searching the web instead...\\n`
+      );
+      
+      const webDocs = await webSearchTool(query, classification.subject, this.logger);
+      
+      if (webDocs.length > 0) {
+        retrievedDocs = webDocs;
+        this.logger.info(
+          { count: webDocs.length },
+          '[TutorChain] Web search fallback successful'
         );
-        retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
+      } else {
+        this.logger.warn('[TutorChain] Web search fallback also returned no results - will bypass reranking');
       }
     }
 
@@ -161,6 +152,22 @@ export class TutorChain {
         { sourcesCount: retrievedDocs.length },
         '[TutorChain] Retrieval complete'
       );
+
+      // Handle case when no documents are retrieved - bypass reranking
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain] No documents retrieved - bypassing reranking');
+        return {
+          answer: '',
+          sources: [],
+          classification,
+          cached: false,
+          confidence: classification.confidence,
+          metadata: {
+            stage: 'no_results',
+            message: 'No relevant information found. Try rephrasing your question or use a different query.',
+          },
+        };
+      }
 
       // Return for UI to show rerank button
       return {
@@ -323,11 +330,12 @@ export class TutorChain {
   async runStreaming(request: ChatRequest, handlers: StreamingHandlers): Promise<void> {
     try {
       handlers.onToken('[AI Tutor]\\n');
+      handlers.onToken('Analyzing your question...\\n\\n');
 
       const classification = await this.classifyQuery(request);
       handlers.onMetadata({ classification, step: 'classification' });
       handlers.onToken(
-        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}%)\\n`
+        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}% confidence)\\n`
       );
 
       const retrievedDocs = await this.retrieveDocuments(
@@ -337,7 +345,24 @@ export class TutorChain {
       );
 
       handlers.onMetadata({ sources: retrievedDocs.length, step: 'retrieval' });
-      handlers.onToken(`Found ${retrievedDocs.length} results\\n`);
+      handlers.onToken(`Found ${retrievedDocs.length} relevant sources\\n\\n`);
+
+      // Handle case when no documents are retrieved - bypass reranking
+      if (retrievedDocs.length === 0) {
+        this.logger.warn('[TutorChain-Stream] No documents retrieved - bypassing reranking');
+        handlers.onComplete({
+          answer: '',
+          sources: [],
+          classification,
+          cached: false,
+          confidence: classification.confidence,
+          metadata: {
+            stage: 'no_results',
+            message: 'No relevant information found. Try rephrasing your question or use a different query.',
+          },
+        });
+        return;
+      }
 
       handlers.onComplete({
         answer: '',

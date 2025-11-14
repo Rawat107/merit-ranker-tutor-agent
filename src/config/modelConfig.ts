@@ -190,6 +190,205 @@ export const appConfig = {
 };
 
 /**
+ * Classification Configuration - Subject Keywords and Intent Patterns
+ * Used by Classifier for heuristic fallback when LLM is unavailable
+ */
+export const classificationConfig = {
+  /**
+   * Subject keyword matching configuration
+   */
+  subjectKeywords: {
+    math: {
+      keywords: [
+        'math', 'equation', 'integral', 'derivative', 'algebra', 'calculus',
+        'geometry', 'trigonometry', 'sine', 'cosine', 'tangent', 'sin', 'cos', 'tan',
+        'arithmetic', 'number', 'calculate', 'solve', 'sum', 'difference', 'product',
+        'quotient', 'fraction', 'decimal', 'percentage', 'ratio', 'proportion',
+        'angle', 'triangle', 'circle', 'square', 'polynomial', 'logarithm',
+        'exponent', 'power', 'root', 'sqrt', 'function', 'graph', 'plot',
+        'matrix', 'vector', 'statistics', 'probability', 'mean', 'median',
+        'permutation', 'combination', 'factorial', 'random', 'expected',
+        'variance', 'standard deviation', 'distribution', 'sample'
+      ],
+      symbols: ['+', '-', '*', '/', '=', '√', 'π', '∫', '∑', '^', '²', '³']
+    },
+    science: {
+      keywords: [
+        'physics', 'chemistry', 'biology', 'atom', 'molecule', 'cell', 'organism',
+        'photosynthesis', 'respiration', 'mitosis', 'meiosis', 'dna', 'rna',
+        'protein', 'enzyme', 'reaction', 'element', 'compound', 'periodic table',
+        'energy', 'force', 'motion', 'velocity', 'acceleration', 'gravity',
+        'electricity', 'magnetism', 'light', 'sound', 'wave', 'quantum',
+        'ecosystem', 'evolution', 'species', 'genetic', 'nucleus', 'electron',
+        'proton', 'neutron', 'chemical', 'organic', 'inorganic', 'catalyst'
+      ],
+      symbols: ['CO2', 'H2O', 'O2', 'N2', 'H+', 'pH']
+    },
+    english_grammar: {
+      keywords: [
+        'grammar', 'sentence', 'verb', 'noun', 'adjective', 'adverb', 'pronoun',
+        'punctuation', 'comma', 'period', 'semicolon', 'apostrophe', 'quotation',
+        'subject', 'predicate', 'clause', 'phrase', 'tense', 'past', 'present',
+        'future', 'plural', 'singular', 'possessive', 'article', 'conjunction',
+        'preposition', 'interjection', 'syntax', 'spelling', 'capitalization',
+        'gerund', 'participle', 'infinitive', 'modal', 'passive', 'active'
+      ],
+      symbols: [] 
+    },
+    history: {
+      keywords: [
+        'history', 'war', 'ancient', 'civilization', 'empire', 'dynasty', 'king',
+        'queen', 'battle', 'revolution', 'independence', 'colonial', 'century',
+        'bc', 'ad', 'medieval', 'renaissance', 'industrial', 'world war',
+        'treaty', 'constitution', 'democracy', 'monarchy', 'republic', 'slavery',
+        'conquest', 'explorer', 'discovery', 'invention', 'historical',
+        'emperor', 'pharaoh', 'sultan', 'kingdom', 'reign', 'throne',
+        'mughal', 'ottoman', 'roman', 'persian', 'greek', 'egyptian',
+        'historical event', 'timeline', 'era', 'period', 'age'
+      ],
+      symbols: []
+    },
+    literature: {
+      keywords: [
+        'literature', 'novel', 'poem', 'poetry', 'author', 'writer', 'book',
+        'shakespeare', 'dickens', 'twain', 'hemingway', 'fiction', 'nonfiction',
+        'character', 'plot', 'theme', 'metaphor', 'simile', 'irony', 'symbolism',
+        'genre', 'narrative', 'prose', 'verse', 'stanza', 'rhyme', 'literary',
+        'protagonist', 'antagonist', 'tragedy', 'comedy', 'drama'
+      ],
+      symbols: []
+    },
+    reasoning: {
+      keywords: [
+        'logic', 'reason', 'deduce', 'infer', 'puzzle', 'riddle', 'paradox',
+        'syllogism', 'premise', 'conclusion', 'argument', 'fallacy', 'valid',
+        'invalid', 'consistent', 'inconsistent', 'contradict', 'imply',
+        'if then', 'therefore', 'because', 'assume', 'suppose', 'given that',
+        'strategy', 'game', 'winning', 'optimal', 'player', 'move', 'turn',
+        'alternately', 'coins', 'stones', 'pile', 'heavier', 'lighter', 'identical',
+        'nim', 'mastermind', 'cryptarithmetic', 'weighing', 'probability',
+        'random', 'chosen', 'flipped', 'conditional probability', 'bayes',
+        'expected value', 'outcomes', 'sample space', 'event'
+      ],
+      symbols: ['→', '∴', '∵', '∀', '∃']
+    },
+    current_affairs: {
+      keywords: [
+        'news', 'recent', 'current', 'today', 'latest', 'yesterday', '2024', '2025',
+        'political', 'election', 'government', 'policy', 'economic', 'market',
+        'covid', 'pandemic', 'climate', 'technology', 'ai', 'social media',
+        'trending', 'viral', 'breaking', 'announcement'
+      ],
+      symbols: []
+    },
+    general_knowledge: {
+      keywords: [
+        'what is', 'who is', 'where is', 'when did', 'define', 'meaning',
+        'capital', 'country', 'continent', 'planet', 'largest', 'smallest',
+        'fastest', 'tallest', 'oldest', 'inventor', 'discovery', 'fact'
+      ],
+      symbols: []
+    }
+  },
+
+  /**
+   * Intent detection patterns
+   */
+  intentPatterns: {
+    factual_retrieval: [
+      'what is', 'who is', 'where is', 'when', 'how long', 'how many',
+      'define', 'meaning', 'what are', 'list', 'name', 'identify',
+      'what does', 'capital of', 'country', 'continent'
+    ],
+    step_by_step_explanation: [
+      'how to', 'steps', 'process', 'procedure', 'explain how',
+      'solve', 'calculate', 'find', 'derive', 'prove',
+      'show me', 'work through', 'walk me'
+    ],
+    comparative_analysis: [
+      'compare', 'contrast', 'difference between', 'vs', 'versus',
+      'similarities', 'differences', 'which is', 'better', 'advantage'
+    ],
+    problem_solving: [
+      'problem', 'puzzle', 'riddle', 'challenge', 'figure out',
+      'resolve', 'answer', 'solution', 'help with'
+    ],
+    reasoning_puzzle: [
+      'why', 'reason', 'logic', 'because', 'cause', 'effect',
+      'what if', 'suppose', 'assume', 'imply', 'deduce'
+    ],
+    verification_check: [
+      'correct', 'right', 'wrong', 'check', 'verify', 'is this',
+      'am i right', 'is this correct', 'validate'
+    ]
+  },
+
+  /**
+   * Level detection indicators
+   */
+  levelIndicators: {
+    advanced: [
+      // Formal/rigorous keywords
+      'prove', 'proof', 'theorem', 'derivation', 'derive', 'rigorous',
+      'formalize', 'formal', 'axiom', 'lemma', 'corollary',
+      
+      // Research/academic keywords
+      'complex analysis', 'advanced', 'research', 'dissertation',
+      'sophisticated', 'intricate', 'elaborate', 'comprehensive study',
+      
+      // Mathematical complexity
+      'infinitely', 'infinite', 'convergence', 'divergence', 'asymptotic',
+      'characterize', 'generalize', 'abstract', 'canonical',
+      
+      // Logic & reasoning
+      'formalize', 'characterize', 'minimal', 'necessary and sufficient',
+      'if and only if', 'iff', 'contrapositive', 'contradiction',
+      
+      // Complexity indicators
+      'multiple constraints', 'optimize', 'minimize', 'maximize',
+      'given arbitrary', 'for all', 'there exists', 'such that'
+    ],
+    intermediate: [
+      'compare', 'contrast', 'explain', 'analyze', 'describe', 'discuss',
+      'why', 'how does', 'what is the difference', 'steps', 'process',
+      'relationship', 'connection', 'cause', 'effect', 'evaluate',
+      'examine', 'interpret', 'illustrate', 'demonstrate', 'calculate',
+      'solve', 'find', 'determine'
+    ],
+    basic: [
+      'what is', 'define', 'who is', 'where is', 'when', 'list',
+      'name', 'identify', 'state', 'what are', 'simple', 'basic',
+      'tell me', 'give me'
+    ]
+  },
+
+  /**
+   * Subject mapping for non-standard LLM responses
+   */
+  subjectMapping: {
+    'reasoning_puzzle': 'reasoning',
+    'logic_puzzle': 'reasoning',
+    'game_theory': 'reasoning',
+    'english': 'english_grammar',
+    'english_grammer': 'english_grammar',
+    'language': 'english_grammar',
+    'grammar': 'english_grammar'
+  },
+
+  /**
+   * Expected format templates by intent
+   */
+  expectedFormats: {
+    factual_retrieval: 'Direct answer with bullet points or concise explanation',
+    step_by_step_explanation: 'Numbered steps with explanations and final answer (LaTeX for math)',
+    comparative_analysis: 'Markdown table or structured comparison with key differences',
+    problem_solving: 'Problem breakdown → approach → detailed solution → verification',
+    reasoning_puzzle: 'Logical reasoning steps with clear conclusions',
+    verification_check: 'Yes/No answer with explanation and corrections if needed'
+  }
+};
+
+/**
  * Model Configuration Service - LangChain compatible
  */
 export class ModelConfigService {
@@ -263,6 +462,13 @@ export class ModelConfigService {
   getPreferredModels(userSubscription: string): string[] {
     const plan = this.tutorConfig.plans[userSubscription] || this.tutorConfig.plans[this.tutorConfig.defaultSubscription];
     return plan.preferredModels;
+  }
+
+  /**
+   * Get classification configuration (subject keywords, intent patterns, etc.)
+   */
+  getClassificationConfig() {
+    return classificationConfig;
   }
 }
 

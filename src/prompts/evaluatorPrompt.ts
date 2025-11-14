@@ -6,6 +6,31 @@ import { buildEvaluationPrompt } from '../utils/promptTemplates.js';
 import { modelConfigService } from '../config/modelConfig.js';
 import pino from 'pino';
 
+/**
+ * Get status message based on tier and subject
+ */
+function getStatusMessage(tier: 'basic' | 'intermediate' | 'advanced', subject: string): string {
+  // Tier-based thinking messages
+  const thinkingMessages = {
+    basic: 'Thinking...',
+    intermediate: 'Thinking harder...',
+    advanced: 'Thinking deeply...'
+  };
+
+  // Subject-specific action messages
+  const subjectMessages: Record<string, string> = {
+    math: 'Solving the problem...',
+    reasoning: 'Working through the logic...',
+    science: 'Analyzing the concepts...',
+    history: 'Researching historical context...',
+    english_grammar: 'Checking grammar rules...',
+    general_knowledge: 'Finding information...',
+    current_affairs: 'Searching latest updates...'
+  };
+
+  return subjectMessages[subject] || thinkingMessages[tier];
+}
+
 export interface EvaluatePromptInput {
   userQuery: string;
   classification: Classification;
@@ -77,11 +102,15 @@ export class EvaluatePrompt {
         '[EvaluatePrompt] Model tier selected for streaming'
       );
 
-      // Send metadata about model selection
+      // Send tier-based thinking status
+      const statusMessage = getStatusMessage(modelTier, input.classification.subject);
+
+      // Send metadata about model selection (status for frontend to display)
       callbacks.onMetadata({
         modelTier,
         subject: input.classification.subject,
         confidence: input.classification.confidence,
+        status: statusMessage,
       });
 
       // STEP 2: Get model config for the tier
@@ -119,16 +148,13 @@ export class EvaluatePrompt {
       );
 
       // STEP 4: Build evaluation prompt with all context
-      const promptTemplate = buildEvaluationPrompt(
+      const prompt = buildEvaluationPrompt(
         input.userQuery,
         input.classification,
         input.topDocument,
         (input.classification as any).intent || 'factual_retrieval',
         input.userPrefs
       );
-
-      // STEP 5: Format the prompt with user query
-      const prompt = await promptTemplate.format({ query: input.userQuery });
 
       this.logger.debug(
         { promptLength: prompt.length, tier: modelTier },
@@ -137,7 +163,8 @@ export class EvaluatePrompt {
 
       let fullAnswer = '';
 
-      // STEP 6: Stream from tier-specific LLM
+      // STEP 5: Stream from tier-specific LLM
+
       await llm.stream(prompt, {
         onToken: (token: string) => {
           fullAnswer += token;
@@ -245,7 +272,7 @@ export class EvaluatePrompt {
       );
 
       // STEP 4: Build evaluation prompt with all context
-      const promptTemplate = buildEvaluationPrompt(
+      const prompt = buildEvaluationPrompt(
         input.userQuery,
         input.classification,
         input.topDocument,
@@ -253,15 +280,12 @@ export class EvaluatePrompt {
         input.userPrefs
       );
 
-      // STEP 5: Format the prompt with user query
-      const prompt = await promptTemplate.format({ query: input.userQuery });
-
       this.logger.debug(
         { promptLength: prompt.length, tier: modelTier },
         '[EvaluatePrompt] Prompt formatted'
       );
 
-      // STEP 6: Invoke tier-specific LLM
+      // STEP 5: Invoke tier-specific LLM
       const answer = await llm.generate(prompt);
 
       const latency = Date.now() - startTime;
@@ -292,66 +316,42 @@ export class EvaluatePrompt {
   }
 
   /**
-   * Select model tier based on confidence and subject/intent
+   * Select model tier based on classification level
+   * 
+   * Rules:
+   * - Respects the classification level directly
+   * - Basic → basic model
+   * - Intermediate → intermediate model
+   * - Advanced → advanced model
    */
   private selectModelTier(classification: Classification): 'basic' | 'intermediate' | 'advanced' {
+    const level = classification.level;
     const confidence = classification.confidence;
-    const subject = classification.subject;
-    const intent = (classification as any).intent || 'factual_retrieval';
 
-    // High confidence threshold
-    if (confidence > 0.9) {
-      return this.selectTierForHighConfidence(subject, intent);
+    this.logger.debug(
+      { level, confidence },
+      '[EvaluatePrompt] Selecting model tier based on classification level'
+    );
+
+    // Directly use the classification level
+    if (level === 'basic') {
+      this.logger.info('[EvaluatePrompt] Using BASIC model for basic-level question');
+      return 'basic';
     }
 
-    // Low confidence: use most capable model
-    return 'advanced';
-  }
+    if (level === 'intermediate') {
+      this.logger.info('[EvaluatePrompt] Using INTERMEDIATE model for intermediate-level question');
+      return 'intermediate';
+    }
 
-  /**
-   * For high confidence (>90%), select between basic and intermediate
-   */
-  private selectTierForHighConfidence(
-    subject: string,
-    intent: string
-  ): 'basic' | 'intermediate' {
-    // Subjects that benefit from intermediate model
-    const intermediateSubjects = ['math', 'reasoning', 'science'];
-    const intermediateIntents = [
-      'step_by_step_explanation',
-      'problem_solving',
-      'reasoning_puzzle',
-      'comparative_analysis',
-    ];
+    if (level === 'advanced') {
+      this.logger.info('[EvaluatePrompt] Using ADVANCED model for advanced-level question');
+      return 'advanced';
+    }
 
-    const useIntermediate =
-      intermediateSubjects.includes(subject) || intermediateIntents.includes(intent);
-
-    return useIntermediate ? 'intermediate' : 'basic';
-  }
-
-  /**
-   * Get temperature by model tier
-   */
-  private getTemperatureByTier(tier: 'basic' | 'intermediate' | 'advanced'): number {
-    const temps: Record<string, number> = {
-      basic: 0.2, // Lower temp for consistent, simple answers
-      intermediate: 0.1, // Lower temp for accurate step-by-step
-      advanced: 0.0, // Deterministic for rigorous answers
-    };
-    return temps[tier];
-  }
-
-  /**
-   * Get max tokens by model tier
-   */
-  private getMaxTokensByTier(tier: 'basic' | 'intermediate' | 'advanced'): number {
-    const tokenLimits: Record<string, number> = {
-      basic: 800, // Basic answers are concise
-      intermediate: 1200, // Room for step-by-step
-      advanced: 2000, // Room for proofs and detailed reasoning
-    };
-    return tokenLimits[tier];
+    // Fallback: use intermediate as safe default
+    this.logger.warn({ level }, '[EvaluatePrompt] Unknown level, defaulting to intermediate');
+    return 'intermediate';
   }
 }
 

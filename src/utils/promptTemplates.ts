@@ -2,6 +2,59 @@ import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { ChatRequest, Classification, Document } from '../types/index.js';
 
 /**
+ * Build classifier system prompt
+ */
+export function buildClassifierSystemPrompt(subjects: string[]): string {
+  const subjectList = subjects.join(', ');
+  return `You are an expert query classifier for an AI tutoring system.
+
+Your task is to classify student queries into:
+1. Subject: ${subjectList}
+2. Level: basic, intermediate, advanced
+3. Intent: what type of response format the user expects
+4. Expected Format: how the answer should be structured
+
+**IMPORTANT: Subject must be EXACTLY one of these:** ${subjectList}
+Do NOT use variations like "reasoning_puzzle" (use "reasoning"), "game_theory" (use "reasoning"), "english" or "english_grammer" (use "english_grammar").
+
+Subject Guidelines:
+- **math**: arithmetic, algebra, calculus, geometry, equations, integrals
+- **science**: physics, chemistry, biology, scientific concepts
+- **reasoning**: logic puzzles, game theory, strategy games, deduction problems, riddles, nim games, weighing puzzles
+- **english_grammar**: grammar, spelling, punctuation, sentence structure
+- **history**: historical events, dates, civilizations
+- **general**: questions that don't fit specific subjects
+
+Classification Guidelines:
+- **basic**: Simple, straightforward questions or basic concepts (e.g., "What is photosynthesis?", "Define gravity")
+- **intermediate**: Questions requiring explanation, comparison, or multi-step reasoning (e.g., "Compare mitosis and meiosis", "Explain why...")
+- **advanced**: Complex problems requiring proofs, derivations, or expert-level analysis (e.g., "Prove the theorem", "Derive the equation")
+
+User Intent Types:
+- **factual_retrieval**: Direct factual questions (What is? Who is? When? Where?)
+- **step_by_step_explanation**: How-to questions, tutorials, derivations (How to? Solve? Steps? Process?)
+- **comparative_analysis**: Compare/contrast questions (Compare? Difference between? vs?)
+- **problem_solving**: Puzzle/challenge questions (Problem? Solve? Figure out?)
+- **reasoning_puzzle**: Logic/reasoning questions (Why? Reason? Logic?)
+- **verification_check**: Check/validate questions (Is this correct? Verify?)
+
+Expected Format Examples:
+- Factual: "Direct answer with bullet points"
+- Steps: "Numbered steps 1,2,3... with LaTeX for math"
+- Compare: "Markdown table for comparison"
+- Problem: "Problem breakdown → approach → solution"
+- Reasoning: "Logical chain with conclusions and winning strategy"
+- Verify: "Yes/No with explanation and corrections if needed"
+
+Provide a confidence score (0.0 to 1.0) indicating your certainty.
+
+You MUST respond with ONLY a valid JSON object. Do not include any text before or after the JSON.
+The JSON must have these fields: subject, level, confidence, reasoning (optional), intent, expectedFormat.
+
+Example response: {"subject": "math", "level": "intermediate", "confidence": 0.9, "intent": "step_by_step_explanation", "expectedFormat": "Numbered steps with LaTeX formulas and verification", "reasoning": "Trigonometry problem asking for solution steps"}`;
+}
+
+/**
  * Build enhanced prompt template with LangChain
  * Includes: converted query + reranker top 1 result (shot) + intent + response structure
  */
@@ -60,6 +113,8 @@ function buildIntentGuidance(classification: Classification): string {
 /**
  * Build final evaluation prompt with all context
  * Used by evaluatePrompt to generate final response
+ * 
+ * IMPORTANT: Returns plain text to avoid conflicts with LaTeX curly braces
  */
 export function buildEvaluationPrompt(
   userQuery: string,
@@ -67,7 +122,7 @@ export function buildEvaluationPrompt(
   topDocument: Document | null,
   intent: string,
   userPrefs?: Record<string, any>
-): ChatPromptTemplate {
+): string {
   
   const shotExample = topDocument
     ? `\n[REFERENCE]\n[[${topDocument.id}]] ${topDocument.text.substring(0, 400)}\n`
@@ -78,25 +133,23 @@ export function buildEvaluationPrompt(
     ? `Language: ${userPrefs.language} | Exam: ${userPrefs.exam} | Style: ${userPrefs.tutorStyle}\n`
     : '';
 
-  return ChatPromptTemplate.fromMessages([
-    [
-      'system',
-      `You are a world-class tutor specializing in ${classification.subject}.
+  // Build the system message
+  const systemMessage = `You are a world-class tutor specializing in ${classification.subject}.
 Difficulty Level: ${classification.level.toUpperCase()}
 ${prefsBlock}
 
 RESPONSE FORMAT:
 ${responseFormat}
 
-CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.`
-    ],
-    [
-      'human',
-      `User Query: {query}${shotExample}
+CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.`;
 
-Provide your response in the format specified above, using the reference material as support.`
-    ]
-  ]);
+  // Build the human message with the actual query embedded (not as variable)
+  const humanMessage = `User Query: ${userQuery}${shotExample}
+
+Provide your response in the format specified above, using the reference material as support.`;
+
+  // Return as plain text prompt
+  return `${systemMessage}\n\n${humanMessage}`;
 }
 
 /**
