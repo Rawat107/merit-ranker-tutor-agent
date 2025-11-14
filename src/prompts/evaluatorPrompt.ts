@@ -6,6 +6,31 @@ import { buildEvaluationPrompt } from '../utils/promptTemplates.js';
 import { modelConfigService } from '../config/modelConfig.js';
 import pino from 'pino';
 
+/**
+ * Get status message based on tier and subject
+ */
+function getStatusMessage(tier: 'basic' | 'intermediate' | 'advanced', subject: string): string {
+  // Tier-based thinking messages
+  const thinkingMessages = {
+    basic: 'Thinking...',
+    intermediate: 'Thinking harder...',
+    advanced: 'Thinking deeply...'
+  };
+
+  // Subject-specific action messages
+  const subjectMessages: Record<string, string> = {
+    math: 'Solving the problem...',
+    reasoning: 'Working through the logic...',
+    science: 'Analyzing the concepts...',
+    history: 'Researching historical context...',
+    english_grammar: 'Checking grammar rules...',
+    general_knowledge: 'Finding information...',
+    current_affairs: 'Searching latest updates...'
+  };
+
+  return subjectMessages[subject] || thinkingMessages[tier];
+}
+
 export interface EvaluatePromptInput {
   userQuery: string;
   classification: Classification;
@@ -77,11 +102,15 @@ export class EvaluatePrompt {
         '[EvaluatePrompt] Model tier selected for streaming'
       );
 
-      // Send metadata about model selection
+      // Send tier-based thinking status
+      const statusMessage = getStatusMessage(modelTier, input.classification.subject);
+
+      // Send metadata about model selection (status for frontend to display)
       callbacks.onMetadata({
         modelTier,
         subject: input.classification.subject,
         confidence: input.classification.confidence,
+        status: statusMessage,
       });
 
       // STEP 2: Get model config for the tier

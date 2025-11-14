@@ -198,6 +198,20 @@
         box-shadow: 0 10px 20px rgba(255, 107, 107, 0.4);
       }
 
+      .status-box {
+        background: #f0f0f0;
+        color: #333;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        display: none;
+        margin-bottom: 10px;
+      }
+
+      .status-box.show {
+        display: block;
+      }
+
       .streaming-indicator {
         background: linear-gradient(90deg, #06d6a0, #118ab2);
         color: white;
@@ -615,10 +629,11 @@
         </div>
 
         <!-- Final Answer -->
-        <div id="answerBox" class="box">
+        <div id="answerBox" class="box show">
           <div class="section-title">
             Final Response (Intent: <span id="answerIntent">-</span>)
           </div>
+          <div id="statusBox" class="status-box"></div>
           <div id="streamingIndicator" class="streaming-indicator">
             Streaming response...
           </div>
@@ -646,6 +661,19 @@
       let currentDocuments = [];
       let rerankedDocuments = [];
       let selectedDocument = null;
+
+      // Show status message in top-left box
+      function showStatus(message) {
+        const statusBox = document.getElementById("statusBox");
+        statusBox.textContent = message;
+        statusBox.classList.add("show");
+      }
+
+      // Hide status message
+      function hideStatus() {
+        const statusBox = document.getElementById("statusBox");
+        statusBox.classList.remove("show");
+      }
 
       // Update step indicator
       function updateStep(stepNum) {
@@ -847,8 +875,33 @@
           return;
         }
 
-        showLoading(true, "🌊 Starting streaming evaluation...");
         updateStep(4);
+
+        const level = currentClassification.level;
+        const subject = currentClassification.subject;
+
+        // Show tier-based status
+        let statusMessage = "Thinking...";
+        if (level === "intermediate") {
+          statusMessage = "Thinking harder...";
+        } else if (level === "advanced") {
+          statusMessage = "Thinking deeply...";
+        }
+
+        // Override with subject-specific message
+        if (subject === "math") {
+          statusMessage = "Solving the problem...";
+        } else if (subject === "reasoning") {
+          statusMessage = "Working through the logic...";
+        } else if (subject === "science") {
+          statusMessage = "Analyzing the concepts...";
+        } else if (subject === "history") {
+          statusMessage = "Researching historical context...";
+        } else if (subject === "english_grammar") {
+          statusMessage = "Checking grammar rules...";
+        }
+
+        showStatus(statusMessage);
 
         try {
           // Use top reranked document
@@ -862,9 +915,8 @@
             },
           ];
 
-          // Show streaming indicator
+          // Show answer box
           document.getElementById("answerBox").classList.add("show");
-          document.getElementById("streamingIndicator").classList.add("show");
           const intent = currentClassification.intent || "factual_retrieval";
           document.getElementById("answerIntent").textContent = intent;
 
@@ -912,8 +964,7 @@
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
-
-          showLoading(false);
+          let isFirstToken = true;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -930,14 +981,26 @@
                   const data = JSON.parse(line.slice(6));
 
                   if (data.type === "token") {
-                    answerContent.textContent += data.content;
-                    answerContent.scrollTop = answerContent.scrollHeight;
+                    // Hide status on first real token
+                    if (isFirstToken) {
+                      hideStatus();
+                      isFirstToken = false;
+                    }
+
+                    // Filter out status messages (check for common status prefixes)
+                    const content = data.content;
+                    const isStatusMessage =
+                      /^(Analyzing|Thinking|Solving|Working|Preparing|Checking|Researching|Searching|Found)/i.test(
+                        content.trim()
+                      );
+                    if (!isStatusMessage) {
+                      answerContent.textContent += content;
+                      answerContent.scrollTop = answerContent.scrollHeight;
+                    }
                   } else if (data.type === "metadata") {
                     console.log("Metadata:", data.content);
                   } else if (data.type === "complete") {
-                    document
-                      .getElementById("streamingIndicator")
-                      .classList.remove("show");
+                    hideStatus();
 
                     if (data.content.success) {
                       document.getElementById("modelUsed").textContent =
@@ -947,16 +1010,14 @@
                       document.getElementById("latency").textContent =
                         `${data.content.data.latency}ms`;
 
-                      showSuccess("Streaming response completed!");
+                      showSuccess("Answer complete!");
                     } else {
                       showError(
                         data.content.message || "Streaming evaluation failed"
                       );
                     }
                   } else if (data.type === "error") {
-                    document
-                      .getElementById("streamingIndicator")
-                      .classList.remove("show");
+                    hideStatus();
                     showError(`Streaming error: ${data.content.message}`);
                   }
                 } catch (e) {
@@ -966,11 +1027,8 @@
             }
           }
         } catch (error) {
-          document
-            .getElementById("streamingIndicator")
-            .classList.remove("show");
+          hideStatus();
           showError(`Streaming evaluation error: ${error.message}`);
-          showLoading(false);
         }
       }
 
@@ -1065,8 +1123,14 @@
         // Start timer for total latency
         const startTime = Date.now();
 
-        showLoading(true, "⚡ Processing your question (all steps)...");
+        // Show initial status
+        showStatus("Analyzing question...");
         updateStep(2);
+
+        // Hide all boxes except answer box
+        document.getElementById("classificationBox").classList.remove("show");
+        document.getElementById("documentsBox").classList.remove("show");
+        document.getElementById("rerankedBox").classList.remove("show");
 
         try {
           // STEP 1: Classify & Retrieve
@@ -1085,13 +1149,20 @@
           currentClassification = classifyData.classification;
           currentDocuments = classifyData.sources || [];
 
-          console.log(
-            `[Quick Answer] Classification: ${currentClassification.subject} (${currentClassification.level})`
-          );
+          const level = currentClassification.level;
+          const subject = currentClassification.subject;
+
+          // Show tier-based thinking message
+          let thinkingMessage = "Thinking...";
+          if (level === "intermediate") {
+            thinkingMessage = "Thinking harder...";
+          } else if (level === "advanced") {
+            thinkingMessage = "Thinking deeply...";
+          }
+          showStatus(thinkingMessage);
 
           // STEP 2: Rerank
           updateStep(3);
-          showLoading(true, "⚡ Reranking documents...");
 
           const rerankResponse = await fetch("http://localhost:3000/rerank", {
             method: "POST",
@@ -1109,13 +1180,23 @@
           const rerankData = await rerankResponse.json();
           rerankedDocuments = rerankData.results || [];
 
-          console.log(
-            `[Quick Answer] Reranked ${rerankedDocuments.length} documents`
-          );
+          // Show subject-specific action message
+          let actionMessage = "Preparing response...";
+          if (subject === "math") {
+            actionMessage = "Solving the problem...";
+          } else if (subject === "reasoning") {
+            actionMessage = "Working through the logic...";
+          } else if (subject === "science") {
+            actionMessage = "Analyzing the concepts...";
+          } else if (subject === "history") {
+            actionMessage = "Researching historical context...";
+          } else if (subject === "english_grammar") {
+            actionMessage = "Checking grammar rules...";
+          }
+          showStatus(actionMessage);
 
           // STEP 3: Evaluate with Streaming
           updateStep(4);
-          showLoading(true, "⚡ Generating streaming response...");
 
           const topDoc = rerankedDocuments[0];
           const docsForEval = [
@@ -1127,17 +1208,14 @@
             },
           ];
 
-          // Show answer box and streaming indicator
+          // Show answer box
           document.getElementById("answerBox").classList.add("show");
-          document.getElementById("streamingIndicator").classList.add("show");
           const intent = currentClassification.intent || "factual_retrieval";
           document.getElementById("answerIntent").textContent = intent;
 
           // Clear previous content
           const answerContent = document.getElementById("answerContent");
           answerContent.textContent = "";
-
-          showLoading(false);
 
           // Stream the response
           const response = await fetch(
@@ -1161,6 +1239,7 @@
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
+          let isFirstToken = true;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1177,12 +1256,23 @@
                   const data = JSON.parse(line.slice(6));
 
                   if (data.type === "token") {
-                    answerContent.textContent += data.content;
+                    // Hide status box when first token arrives
+                    if (isFirstToken) {
+                      hideStatus();
+                      isFirstToken = false;
+                    }
+
+                    // Append all tokens (status messages no longer sent as tokens)
+                    const content = data.content;
+                    answerContent.textContent += content;
                     answerContent.scrollTop = answerContent.scrollHeight;
+                  } else if (data.type === "metadata") {
+                    // Handle status messages from metadata
+                    if (data.content && data.content.status) {
+                      showStatus(data.content.status);
+                    }
                   } else if (data.type === "complete") {
-                    document
-                      .getElementById("streamingIndicator")
-                      .classList.remove("show");
+                    hideStatus();
 
                     if (data.content.success) {
                       const totalLatency = Date.now() - startTime;
@@ -1193,11 +1283,9 @@
                       document.getElementById("modelLevel").textContent =
                         data.content.data.levelUsed;
                       document.getElementById("latency").textContent =
-                        `${totalLatency}ms (total: classify → rerank → stream)`;
+                        `${totalLatency}ms`;
 
-                      showSuccess(
-                        `Quick answer complete! Total time: ${totalLatency}ms`
-                      );
+                      showSuccess(`Answer complete! (${totalLatency}ms)`);
 
                       console.log(
                         `[Quick Answer] Total latency: ${totalLatency}ms`
@@ -1209,9 +1297,7 @@
                       showError(data.content.message || "Quick answer failed");
                     }
                   } else if (data.type === "error") {
-                    document
-                      .getElementById("streamingIndicator")
-                      .classList.remove("show");
+                    hideStatus();
                     showError(`Error: ${data.content.message}`);
                   }
                 } catch (e) {
@@ -1221,11 +1307,8 @@
             }
           }
         } catch (error) {
-          document
-            .getElementById("streamingIndicator")
-            .classList.remove("show");
+          hideStatus();
           showError(`Quick answer failed: ${error.message}`);
-          showLoading(false);
         }
       }
 

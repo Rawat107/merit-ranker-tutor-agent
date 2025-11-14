@@ -64,7 +64,7 @@ export class TutorChain {
     // ROUTE 1: Current affairs - go straight to web search
     if (isCurrentAffairs) {
       this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-      onProgress?.('Searching web...\\n');
+      onProgress?.('🌐 Searching the web for latest information...\\n');
       retrievedDocs = await webSearchTool(query, classification.subject, this.logger);
       
       if (retrievedDocs.length === 0) {
@@ -76,7 +76,7 @@ export class TutorChain {
 
     // ROUTE 2 & 3: Try KB first, fallback to web search if needed
     this.logger.info('[TutorChain] Route: Knowledge Base');
-    onProgress?.('Searching knowledge base...\\n');
+    onProgress?.('📖 Searching knowledge base...\\n');
     
     retrievedDocs = await this.retriever.getRelevantDocuments(query, {
       subject: classification.subject,
@@ -102,9 +102,9 @@ export class TutorChain {
       onProgress?.(
         `${
           retrievedDocs.length === 0
-            ? 'No KB results'
-            : `Low relevance (${(topScore * 100).toFixed(1)}%)`
-        }, trying web search...\\n`
+            ? ' No KB results found'
+            : ` Low relevance (${(topScore * 100).toFixed(1)}%)`
+        }\\n🌐 Searching the web instead...\\n`
       );
       
       const webDocs = await webSearchTool(query, classification.subject, this.logger);
@@ -330,11 +330,12 @@ export class TutorChain {
   async runStreaming(request: ChatRequest, handlers: StreamingHandlers): Promise<void> {
     try {
       handlers.onToken('[AI Tutor]\\n');
+      handlers.onToken('Analyzing your question...\\n\\n');
 
       const classification = await this.classifyQuery(request);
       handlers.onMetadata({ classification, step: 'classification' });
       handlers.onToken(
-        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}%)\\n`
+        `Subject: ${classification.subject} (${(classification.confidence * 100).toFixed(0)}% confidence)\\n`
       );
 
       const retrievedDocs = await this.retrieveDocuments(
@@ -344,7 +345,7 @@ export class TutorChain {
       );
 
       handlers.onMetadata({ sources: retrievedDocs.length, step: 'retrieval' });
-      handlers.onToken(`Found ${retrievedDocs.length} results\\n`);
+      handlers.onToken(`Found ${retrievedDocs.length} relevant sources\\n\\n`);
 
       // Handle case when no documents are retrieved - bypass reranking
       if (retrievedDocs.length === 0) {
