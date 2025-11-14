@@ -111,7 +111,7 @@ function buildIntentGuidance(classification: Classification): string {
 }
 
 /**
- * Build final evaluation prompt with all context
+ * Build final evaluation prompt with all context and conversation history
  * Used by evaluatePrompt to generate final response
  * 
  * IMPORTANT: Returns plain text to avoid conflicts with LaTeX curly braces
@@ -121,11 +121,13 @@ export function buildEvaluationPrompt(
   classification: Classification,
   topDocument: Document | null,
   intent: string,
-  userPrefs?: Record<string, any>
+  userPrefs?: Record<string, any>,
+  conversationHistory?: string,
+  userName?: string | null
 ): string {
   
   const shotExample = topDocument
-    ? `\n[REFERENCE]\n[[${topDocument.id}]] ${topDocument.text.substring(0, 400)}\n`
+    ? `\n[REFERENCE MATERIAL]\n[[${topDocument.id}]] ${topDocument.text.substring(0, 400)}\n`
     : '';
 
   const responseFormat = getResponseFormatByIntent(intent);
@@ -133,20 +135,35 @@ export function buildEvaluationPrompt(
     ? `Language: ${userPrefs.language} | Exam: ${userPrefs.exam} | Style: ${userPrefs.tutorStyle}\n`
     : '';
 
-  // Build the system message
-  const systemMessage = `You are a world-class tutor specializing in ${classification.subject}.
+  // Format conversation history if provided
+  const historyBlock = conversationHistory 
+    ? `\n[CONVERSATION HISTORY]\n${conversationHistory}\n`
+    : '';
+
+  // Build the system message with natural instructions
+  const greetingInstruction = userName 
+    ? `The user's name is ${userName}. Greet them naturally by name when appropriate and maintain consistency with previous conversations.`
+    : 'If the user introduces themselves or mentions their name in the conversation history, greet them naturally and remember it throughout the conversation.';
+
+  const systemMessage = `You are a helpful, knowledgeable AI tutor specializing in ${classification.subject}.
 Difficulty Level: ${classification.level.toUpperCase()}
 ${prefsBlock}
+
+CONVERSATION GUIDELINES:
+- ${greetingInstruction}
+- Reference previous messages when relevant to maintain context and continuity
+- Be natural and conversational while staying accurate and helpful
+- If asked about information from earlier in the conversation, recall it accurately
 
 RESPONSE FORMAT:
 ${responseFormat}
 
 CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.`;
 
-  // Build the human message with the actual query embedded (not as variable)
-  const humanMessage = `User Query: ${userQuery}${shotExample}
+  // Build the human message with the actual query embedded
+  const humanMessage = `${historyBlock}Current User Query: ${userQuery}${shotExample}
 
-Provide your response in the format specified above, using the reference material as support.`;
+Provide your response in the format specified above, using the conversation history and reference material as needed.`;
 
   // Return as plain text prompt
   return `${systemMessage}\n\n${humanMessage}`;

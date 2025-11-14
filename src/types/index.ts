@@ -109,3 +109,6 @@ export interface ClassificationWithIntent extends Classification {
   intent?: string;
   expectedFormat?: string;
 }
+
+// LangChain BaseMessage type (re-export from @langchain/core/messages)
+export { BaseMessage } from '@langchain/core/messages';

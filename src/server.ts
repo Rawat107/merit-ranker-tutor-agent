@@ -79,14 +79,15 @@ export async function createServer(): Promise<FastifyInstance> {
         '[Chat] 📝 Incoming request'
       );
 
-      // Run tutor chain (classifier + retrieval)
-      const result = await tutorChain.run(request.body);
+      // Run tutor chain (classifier + retrieval) with sessionId
+      const result = await tutorChain.run(request.body, request.body.sessionId);
 
       server.log.info(
         {
           subject: result.classification.subject,
           sourceCount: result.sources?.length || 0,
           confidence: result.classification.confidence,
+                  sessionId: request.body.sessionId,
         },
         '[Chat] ✅ Response ready'
       );
@@ -114,6 +115,7 @@ export async function createServer(): Promise<FastifyInstance> {
       classification: Classification;
       documents: Document[];
       userSubscription?: string;
+      sessionId?: string;
     };
   }>('/evaluate/stream', {
     schema: {
@@ -136,12 +138,13 @@ export async function createServer(): Promise<FastifyInstance> {
             items: { type: 'object' },
           },
           userSubscription: { type: 'string' },
+          sessionId: { type: 'string' },
         },
       },
     }
   }, async (request, reply) => {
     try {
-      const { userQuery, classification, documents, userSubscription } = request.body;
+      const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
 
       if (!userQuery || userQuery.trim() === '') {
         reply.status(400);
@@ -164,6 +167,7 @@ export async function createServer(): Promise<FastifyInstance> {
           subject: classification.subject,
           confidence: classification.confidence,
           docCount: documents.length,
+                  sessionId,
         },
         '[Evaluate Stream] 🌊 Streaming evaluation request received'
       );
@@ -207,6 +211,7 @@ export async function createServer(): Promise<FastifyInstance> {
                   latency: result.latency,
                   classification,
                   sources: documents,
+                                  sessionId,
                 },
               }
             })}\n\n`);
@@ -217,6 +222,7 @@ export async function createServer(): Promise<FastifyInstance> {
                 levelUsed: result.levelUsed,
                 latency: result.latency,
                 answerLength: result.answer.length,
+                              sessionId,
               },
               '[Evaluate Stream] ✅ Streaming evaluation complete'
             );
@@ -237,7 +243,8 @@ export async function createServer(): Promise<FastifyInstance> {
             
             reply.raw.end();
           },
-        }
+        },
+        sessionId
       );
     } catch (error) {
       server.log.error(error, '[Evaluate Stream] ❌ Streaming setup failed');
@@ -263,6 +270,7 @@ export async function createServer(): Promise<FastifyInstance> {
       classification: Classification;
       documents: Document[];
       userSubscription?: string;
+      sessionId?: string;
     };
   }>('/evaluate', {
     schema: {
@@ -285,12 +293,13 @@ export async function createServer(): Promise<FastifyInstance> {
             items: { type: 'object' },
           },
           userSubscription: { type: 'string' },
+          sessionId: { type: 'string' },
         },
       },
     }
   }, async (request, reply) => {
     try {
-      const { userQuery, classification, documents, userSubscription } = request.body;
+      const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
 
       if (!userQuery || userQuery.trim() === '') {
         reply.status(400);
@@ -324,7 +333,8 @@ export async function createServer(): Promise<FastifyInstance> {
         userQuery,
         classification,
         documents,
-        userSubscription || 'free'
+        userSubscription || 'free',
+        sessionId // Pass sessionId to enable chat history
       );
 
       server.log.info(
@@ -333,6 +343,7 @@ export async function createServer(): Promise<FastifyInstance> {
           levelUsed: evaluateResult.levelUsed,
           latency: evaluateResult.latency,
           answerLength: evaluateResult.answer.length,
+                  sessionId,
         },
         '[Evaluate] ✅ Evaluation complete'
       );
@@ -347,6 +358,7 @@ export async function createServer(): Promise<FastifyInstance> {
           latency: evaluateResult.latency,
           classification,
           sources: documents,
+          sessionId,
         },
       };
     } catch (error) {

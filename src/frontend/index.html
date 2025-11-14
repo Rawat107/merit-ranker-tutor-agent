@@ -661,6 +661,18 @@
       let currentDocuments = [];
       let rerankedDocuments = [];
       let selectedDocument = null;
+      // Session management
+      let sessionId = localStorage.getItem("tutorSessionId");
+      if (!sessionId) {
+        if (window.crypto && crypto.randomUUID) {
+          sessionId = crypto.randomUUID();
+        } else {
+          sessionId =
+            "sess-" + Math.random().toString(36).slice(2) + Date.now();
+        }
+        localStorage.setItem("tutorSessionId", sessionId);
+      }
+      console.log("[Tutor] Using sessionId:", sessionId);
 
       // Show status message in top-left box
       function showStatus(message) {
@@ -720,7 +732,7 @@
           const response = await fetch("http://localhost:3000/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: query }),
+            body: JSON.stringify({ message: query, sessionId }),
           });
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -814,6 +826,7 @@
               query: query,
               documents: currentDocuments,
               topK: 3,
+              sessionId,
             }),
           });
 
@@ -937,6 +950,7 @@
                 classification: currentClassification,
                 documents: docsForEval,
                 userSubscription: "free",
+                sessionId,
               }),
             }
           );
@@ -953,6 +967,7 @@
                 classification: currentClassification,
                 documents: docsForEval,
                 userSubscription: "free",
+                sessionId,
               }),
             }
           );
@@ -1062,6 +1077,7 @@
               classification: currentClassification,
               documents: docsForEval,
               userSubscription: "free",
+              sessionId,
             }),
           });
 
@@ -1137,7 +1153,7 @@
           const classifyResponse = await fetch("http://localhost:3000/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: query }),
+            body: JSON.stringify({ message: query, sessionId }),
           });
 
           if (!classifyResponse.ok)
@@ -1171,6 +1187,7 @@
               query: query,
               documents: currentDocuments,
               topK: 3,
+              sessionId,
             }),
           });
 
@@ -1228,6 +1245,7 @@
                 classification: currentClassification,
                 documents: docsForEval,
                 userSubscription: "free",
+                sessionId,
               }),
             }
           );
