@@ -9,6 +9,7 @@ import { RedisCache } from '../cache/RedisCache.js';
 import { ChatMemory } from '../cache/ChatMemory.js';
 import { createClient } from 'redis';
 import { appConfig } from '../config/modelConfig.js';
+import { validateResponse } from '../utils/responseValidator.js';
 import pino from 'pino';
 
 const USER_PREFS = {
@@ -295,7 +296,7 @@ export class TutorChain {
       let userName: string | null = null;
       
       if (sessionId) {
-        const messages = await this.chatMemory.load(sessionId, 10);
+        const messages = await this.chatMemory.load(sessionId, 5);
         const formatted = this.chatMemory.format(messages, true);
         conversationHistory = formatted.historyText;
         userName = formatted.userName;
@@ -343,39 +344,55 @@ export class TutorChain {
 
       // Store in cache after streaming completes
       if (capturedResult !== undefined) {
-        this.logger.debug('Storing streaming result in cache...');
+        this.logger.debug('Validating streaming result before caching...');
         
         const result = capturedResult as EvaluatePromptOutput;
         
-        await Promise.all([
-          this.redisCache.storeDirectCache(
-            userQuery,
-            finalAnswer,
-            classification.subject,
-            {
-              confidence: classification.confidence,
-              modelUsed: result.modelUsed,
-              levelUsed: result.levelUsed,
-            }
-          ),
-          this.redisCache.storeSemanticCache(
-            userQuery,
-            finalAnswer,
-            classification.subject,
-            {
-              confidence: classification.confidence,
-              modelUsed: result.modelUsed,
-              levelUsed: result.levelUsed,
-            }
-          ),
-        ]);
+        // Validate response quality before caching
+        const validation = validateResponse(finalAnswer);
+        
+        if (validation.isValid) {
+          this.logger.info({ score: validation.score.toFixed(2) }, 'Response passed quality check');
+          
+          await Promise.all([
+            this.redisCache.storeDirectCache(
+              userQuery,
+              finalAnswer,
+              classification.subject,
+              {
+                confidence: classification.confidence,
+                modelUsed: result.modelUsed,
+                levelUsed: result.levelUsed,
+              }
+            ),
+            this.redisCache.storeSemanticCache(
+              userQuery,
+              finalAnswer,
+              classification.subject,
+              {
+                confidence: classification.confidence,
+                modelUsed: result.modelUsed,
+                levelUsed: result.levelUsed,
+              }
+            ),
+          ]);
 
-        this.logger.info('✓ Stored streaming result in both caches');
+          this.logger.info('✓ Stored streaming result in both caches');
 
-        // STEP 3: Save conversation to memory
-        if (sessionId) {
-          await this.chatMemory.save(sessionId, userQuery, finalAnswer);
-          this.logger.info({ sessionId }, '✓ Saved streaming conversation to memory');
+          // STEP 3: Save conversation to memory
+          if (sessionId) {
+            await this.chatMemory.save(sessionId, userQuery, finalAnswer);
+            this.logger.info({ sessionId }, '✓ Saved streaming conversation to memory');
+          }
+        } else {
+          this.logger.warn(
+            { 
+              reason: validation.reason, 
+              score: validation.score.toFixed(2),
+              preview: finalAnswer.substring(0, 100)
+            }, 
+            '✗ Skipped caching - response failed quality check'
+          );
         }
       }
     } catch (error) {
@@ -458,7 +475,7 @@ export class TutorChain {
       let userName: string | null = null;
       
       if (sessionId) {
-        const messages = await this.chatMemory.load(sessionId, 10);
+        const messages = await this.chatMemory.load(sessionId, 5);
         const formatted = this.chatMemory.format(messages, true);
         conversationHistory = formatted.historyText;
         userName = formatted.userName;
@@ -489,34 +506,50 @@ export class TutorChain {
         '[TutorChain] Evaluate complete'
       );
 
-      // ADD: Store in BOTH caches (direct and semantic)
-      await Promise.all([
-        this.redisCache.storeDirectCache(
-          userQuery,
-          output.answer,
-          classification.subject,
-          {
-            confidence: classification.confidence,
-            modelUsed: output.modelUsed,
-            levelUsed: output.levelUsed,
-          }
-        ),
-        this.redisCache.storeSemanticCache(
-          userQuery,
-          output.answer,
-          classification.subject,
-          {
-            confidence: classification.confidence,
-            modelUsed: output.modelUsed,
-            levelUsed: output.levelUsed,
-          }
-        ),
-      ]);
+      // Validate response quality before caching
+      const validation = validateResponse(output.answer);
+      
+      if (validation.isValid) {
+        this.logger.info({ score: validation.score.toFixed(2) }, 'Response passed quality check');
+        
+        // Store in BOTH caches (direct and semantic)
+        await Promise.all([
+          this.redisCache.storeDirectCache(
+            userQuery,
+            output.answer,
+            classification.subject,
+            {
+              confidence: classification.confidence,
+              modelUsed: output.modelUsed,
+              levelUsed: output.levelUsed,
+            }
+          ),
+          this.redisCache.storeSemanticCache(
+            userQuery,
+            output.answer,
+            classification.subject,
+            {
+              confidence: classification.confidence,
+              modelUsed: output.modelUsed,
+              levelUsed: output.levelUsed,
+            }
+          ),
+        ]);
 
-      // STEP 3: Save conversation to memory
-      if (sessionId) {
-        await this.chatMemory.save(sessionId, userQuery, output.answer);
-        this.logger.info({ sessionId }, '✓ Saved conversation exchange to memory');
+        // STEP 3: Save conversation to memory
+        if (sessionId) {
+          await this.chatMemory.save(sessionId, userQuery, output.answer);
+          this.logger.info({ sessionId }, '✓ Saved conversation exchange to memory');
+        }
+      } else {
+        this.logger.warn(
+          { 
+            reason: validation.reason, 
+            score: validation.score.toFixed(2),
+            preview: output.answer.substring(0, 100)
+          }, 
+          '✗ Skipped caching - response failed quality check'
+        );
       }
 
       return output;

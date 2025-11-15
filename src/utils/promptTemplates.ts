@@ -127,7 +127,14 @@ export function buildEvaluationPrompt(
 ): string {
   
   const shotExample = topDocument
-    ? `\n[REFERENCE MATERIAL]\n[[${topDocument.id}]] ${topDocument.text.substring(0, 400)}\n`
+    ? (() => {
+        const url = (topDocument.metadata && (topDocument.metadata as any).url) || '';
+        const title = (topDocument.metadata && (topDocument.metadata as any).title) || topDocument.id;
+        const linkPart = url ? ` (Link: ${url})` : '';
+        const header = `\n[REFERENCE MATERIAL]\nSource: ${title}${linkPart}\n`;
+        const body = `${topDocument.text.substring(0, 240)}\n`;
+        return header + body;
+      })()
     : '';
 
   const responseFormat = getResponseFormatByIntent(intent);
@@ -145,7 +152,7 @@ export function buildEvaluationPrompt(
     ? `The user's name is ${userName}. Greet them naturally by name when appropriate and maintain consistency with previous conversations.`
     : 'If the user introduces themselves or mentions their name in the conversation history, greet them naturally and remember it throughout the conversation.';
 
-  const systemMessage = `You are a helpful, knowledgeable AI tutor specializing in ${classification.subject}.
+  const systemMessage = `You are a professional educator and a helpful, knowledgeable AI tutor specializing in ${classification.subject}.
 Difficulty Level: ${classification.level.toUpperCase()}
 ${prefsBlock}
 
@@ -154,6 +161,7 @@ CONVERSATION GUIDELINES:
 - Reference previous messages when relevant to maintain context and continuity
 - Be natural and conversational while staying accurate and helpful
 - If asked about information from earlier in the conversation, recall it accurately
+ - When citing sources from web search, include the clickable URL if available
 
 RESPONSE FORMAT:
 ${responseFormat}
