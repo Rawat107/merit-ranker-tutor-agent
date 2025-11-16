@@ -152,7 +152,7 @@ export function buildEvaluationPrompt(
     ? `The user's name is ${userName}. Greet them naturally by name when appropriate and maintain consistency with previous conversations.`
     : 'If the user introduces themselves or mentions their name in the conversation history, greet them naturally and remember it throughout the conversation.';
 
-  const systemMessage = `You are a professional educator and a helpful, knowledgeable AI tutor specializing in ${classification.subject}.
+  const systemMessage = `You are a professional educator for government exams in India. You are specializing in ${classification.subject}. Your role is to help students prepare for these exams by providing clear, accurate, and actionable answers, and by guiding them to think about what to ask next.
 Difficulty Level: ${classification.level.toUpperCase()}
 ${prefsBlock}
 
@@ -161,17 +161,20 @@ CONVERSATION GUIDELINES:
 - Reference previous messages when relevant to maintain context and continuity
 - Be natural and conversational while staying accurate and helpful
 - If asked about information from earlier in the conversation, recall it accurately
- - When citing sources from web search, include the clickable URL if available
+- When citing sources from web search, include the clickable URL if available
 
 RESPONSE FORMAT:
 ${responseFormat}
 
-CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.`;
+CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.
+
+After your main answer, suggest ONE relevant next question the student could ask to continue learning. Format this as:
+Suggested Next Question: <your suggested question here>`;
 
   // Build the human message with the actual query embedded
   const humanMessage = `${historyBlock}Current User Query: ${userQuery}${shotExample}
 
-Provide your response in the format specified above, using the conversation history and reference material as needed.`;
+Provide your response in the format specified above, using the conversation history and reference material as needed. Remember to include a single suggested next question at the end.`;
 
   // Return as plain text prompt
   return `${systemMessage}\n\n${humanMessage}`;

@@ -6,9 +6,6 @@ import { ChatRequest, AITutorResponse, Classification, Document } from './types/
 import { Classifier } from './classifier/Classifier.js';
 import pino from 'pino';
 
-/**
- * Main Fastify server with LangChain AI Tutor orchestration + Evaluate endpoint
- */
 export async function createServer(): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
@@ -20,36 +17,37 @@ export async function createServer(): Promise<FastifyInstance> {
     requestTimeout: 30_000,
   });
 
-  const logger = pino({ level: appConfig.logLevel });
+  const logger = pino({ 
+    level: appConfig.logLevel,
+    transport: appConfig.nodeEnv === 'development' ? { target: 'pino-pretty' } : undefined,
+  });
 
-  // Register plugins
   await server.register(cors, {
     origin: appConfig.nodeEnv === 'development' ? true : ['http://localhost:3000'],
     credentials: true,
   });
 
-  // Initialize DI container
+  server.log.info({ env: appConfig.nodeEnv, logLevel: appConfig.logLevel }, 'Initializing server');
+
   const container = createContainer(logger);
   const classifier = new Classifier(logger);
 
-  // Health check endpoints
+  server.log.info('Container and classifier initialized');
+
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
-  server.get('/ready', async () => {
+  server.get('/ready', async (request, reply) => {
     try {
       return { status: 'ready', services: { bedrock: 'ok' } };
     } catch (error) {
-      server.log.error(error, 'Readiness check failed');
+      server.log.error({ error, path: request.url }, 'Readiness check failed');
       const msg = error instanceof Error ? error.message : 'unknown';
       return { status: 'not ready', error: msg };
     }
   });
 
-  /**
-   * POST /chat - Initial chat request (returns classification + retrieval, ready for evaluation)
-   */
   server.post<{ Body: ChatRequest }>('/chat', {
     schema: {
       body: {
@@ -67,48 +65,64 @@ export async function createServer(): Promise<FastifyInstance> {
       },
     }
   }, async (request, reply) => {
+    const startTime = Date.now();
+    const { sessionId, message, subject, level } = request.body;
+    
     try {
-      const tutorChain = container.getTutorChain();
-
       server.log.info(
         {
-          message: request.body.message.substring(0, 100),
-          subject: request.body.subject || 'auto-classify',
-          level: request.body.level || 'auto-classify',
+          endpoint: '/chat',
+          sessionId,
+          messagePreview: message.substring(0, 100),
+          subject: subject || 'auto',
+          level: level || 'auto',
+          messageLength: message.length,
         },
-        '[Chat] 📝 Incoming request'
+        'Chat request received'
       );
 
-      // Run tutor chain (classifier + retrieval) with sessionId
-      const result = await tutorChain.run(request.body, request.body.sessionId);
+      const tutorChain = container.getTutorChain();
+      const result = await tutorChain.run(request.body, sessionId);
+
+      const duration = Date.now() - startTime;
 
       server.log.info(
         {
+          endpoint: '/chat',
+          sessionId,
           subject: result.classification.subject,
-          sourceCount: result.sources?.length || 0,
+          level: result.classification.level,
           confidence: result.classification.confidence,
-                  sessionId: request.body.sessionId,
+          sourceCount: result.sources?.length || 0,
+          cached: result.cached || false,
+          duration,
         },
-        '[Chat] ✅ Response ready'
+        'Chat request completed'
       );
 
       reply.type('application/json');
       return result;
     } catch (error) {
-      server.log.error(error, '[Chat] ❌ Chat request failed');
+      const duration = Date.now() - startTime;
+      server.log.error(
+        { 
+          endpoint: '/chat',
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          duration,
+        }, 
+        'Chat request failed'
+      );
+      
       reply.status(500);
-      const msg = error instanceof Error ? error.message : 'unknown error';
       return {
         error: 'Internal server error',
-        message: msg,
+        message: error instanceof Error ? error.message : 'unknown error',
       };
     }
   });
 
-  /**
-   * POST /evaluate/stream - Streaming evaluate prompt and generate final response
-   * Called when user clicks "Evaluate" button with streaming enabled
-   */
   server.post<{
     Body: {
       userQuery: string;
@@ -143,36 +157,43 @@ export async function createServer(): Promise<FastifyInstance> {
       },
     }
   }, async (request, reply) => {
+    const startTime = Date.now();
+    const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
+
+    if (!userQuery || userQuery.trim() === '') {
+      server.log.warn({ endpoint: '/evaluate/stream' }, 'Empty userQuery received');
+      reply.status(400);
+      return { error: 'userQuery is required and cannot be empty' };
+    }
+
+    if (!classification) {
+      server.log.warn({ endpoint: '/evaluate/stream' }, 'Missing classification');
+      reply.status(400);
+      return { error: 'classification is required' };
+    }
+
+    if (!Array.isArray(documents)) {
+      server.log.warn({ endpoint: '/evaluate/stream' }, 'Invalid documents format');
+      reply.status(400);
+      return { error: 'documents must be an array' };
+    }
+
     try {
-      const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
-
-      if (!userQuery || userQuery.trim() === '') {
-        reply.status(400);
-        return { error: 'userQuery is required and cannot be empty' };
-      }
-
-      if (!classification) {
-        reply.status(400);
-        return { error: 'classification is required' };
-      }
-
-      if (!Array.isArray(documents)) {
-        reply.status(400);
-        return { error: 'documents must be an array' };
-      }
-
       server.log.info(
         {
-          query: userQuery.substring(0, 80),
+          endpoint: '/evaluate/stream',
+          sessionId,
+          queryPreview: userQuery.substring(0, 80),
           subject: classification.subject,
+          level: classification.level,
           confidence: classification.confidence,
+          intent: (classification as any).intent,
           docCount: documents.length,
-                  sessionId,
+          subscription: userSubscription || 'free',
         },
-        '[Evaluate Stream] 🌊 Streaming evaluation request received'
+        'Streaming evaluation started'
       );
 
-      // Set up Server-Sent Events headers
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -182,8 +203,8 @@ export async function createServer(): Promise<FastifyInstance> {
       });
 
       const tutorChain = container.getTutorChain();
+      let tokenCount = 0;
 
-      // Start streaming evaluation
       await tutorChain.evaluateStreaming(
         userQuery,
         classification,
@@ -191,15 +212,20 @@ export async function createServer(): Promise<FastifyInstance> {
         userSubscription || 'free',
         {
           onToken: (token: string) => {
-            // Send token as SSE event
+            tokenCount++;
             reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
           },
           onMetadata: (metadata: any) => {
-            // Send metadata as SSE event
+            server.log.debug({ 
+              endpoint: '/evaluate/stream',
+              sessionId,
+              metadata 
+            }, 'Metadata sent to client');
             reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
           },
           onComplete: (result) => {
-            // Send final result
+            const duration = Date.now() - startTime;
+            
             reply.raw.write(`data: ${JSON.stringify({ 
               type: 'complete', 
               content: {
@@ -211,26 +237,37 @@ export async function createServer(): Promise<FastifyInstance> {
                   latency: result.latency,
                   classification,
                   sources: documents,
-                                  sessionId,
+                  sessionId,
                 },
               }
             })}\n\n`);
 
             server.log.info(
               {
+                endpoint: '/evaluate/stream',
+                sessionId,
                 modelUsed: result.modelUsed,
                 levelUsed: result.levelUsed,
-                latency: result.latency,
+                streamLatency: result.latency,
+                totalDuration: duration,
                 answerLength: result.answer.length,
-                              sessionId,
+                tokensStreamed: tokenCount,
               },
-              '[Evaluate Stream] ✅ Streaming evaluation complete'
+              'Streaming evaluation completed'
             );
 
             reply.raw.end();
           },
           onError: (error) => {
-            server.log.error(error, '[Evaluate Stream] ❌ Streaming evaluation failed');
+            const duration = Date.now() - startTime;
+            
+            server.log.error({ 
+              endpoint: '/evaluate/stream',
+              sessionId,
+              error: error.message,
+              stack: error.stack,
+              duration,
+            }, 'Streaming evaluation failed');
             
             reply.raw.write(`data: ${JSON.stringify({ 
               type: 'error', 
@@ -247,7 +284,15 @@ export async function createServer(): Promise<FastifyInstance> {
         sessionId
       );
     } catch (error) {
-      server.log.error(error, '[Evaluate Stream] ❌ Streaming setup failed');
+      const duration = Date.now() - startTime;
+      
+      server.log.error({ 
+        endpoint: '/evaluate/stream',
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration,
+      }, 'Streaming setup failed');
       
       if (!reply.sent) {
         reply.status(500);
@@ -260,10 +305,6 @@ export async function createServer(): Promise<FastifyInstance> {
     }
   });
 
-  /**
-   * POST /evaluate - Evaluate prompt and generate final response
-   * Called when user clicks "Evaluate" button on frontend
-   */
   server.post<{
     Body: {
       userQuery: string;
@@ -298,54 +339,65 @@ export async function createServer(): Promise<FastifyInstance> {
       },
     }
   }, async (request, reply) => {
+    const startTime = Date.now();
+    const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
+
+    if (!userQuery || userQuery.trim() === '') {
+      server.log.warn({ endpoint: '/evaluate' }, 'Empty userQuery received');
+      reply.status(400);
+      return { error: 'userQuery is required and cannot be empty' };
+    }
+
+    if (!classification) {
+      server.log.warn({ endpoint: '/evaluate' }, 'Missing classification');
+      reply.status(400);
+      return { error: 'classification is required' };
+    }
+
+    if (!Array.isArray(documents)) {
+      server.log.warn({ endpoint: '/evaluate' }, 'Invalid documents format');
+      reply.status(400);
+      return { error: 'documents must be an array' };
+    }
+
     try {
-      const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
-
-      if (!userQuery || userQuery.trim() === '') {
-        reply.status(400);
-        return { error: 'userQuery is required and cannot be empty' };
-      }
-
-      if (!classification) {
-        reply.status(400);
-        return { error: 'classification is required' };
-      }
-
-      if (!Array.isArray(documents)) {
-        reply.status(400);
-        return { error: 'documents must be an array' };
-      }
-
       server.log.info(
         {
-          query: userQuery.substring(0, 80),
+          endpoint: '/evaluate',
+          sessionId,
+          queryPreview: userQuery.substring(0, 80),
           subject: classification.subject,
+          level: classification.level,
           confidence: classification.confidence,
+          intent: (classification as any).intent,
           docCount: documents.length,
+          subscription: userSubscription || 'free',
         },
-        '[Evaluate] 🔬 Evaluation request received'
+        'Evaluation started'
       );
 
       const tutorChain = container.getTutorChain();
-
-      // Call evaluate on TutorChain
       const evaluateResult = await tutorChain.evaluate(
         userQuery,
         classification,
         documents,
         userSubscription || 'free',
-        sessionId // Pass sessionId to enable chat history
+        sessionId
       );
+
+      const duration = Date.now() - startTime;
 
       server.log.info(
         {
+          endpoint: '/evaluate',
+          sessionId,
           modelUsed: evaluateResult.modelUsed,
           levelUsed: evaluateResult.levelUsed,
-          latency: evaluateResult.latency,
+          evaluateLatency: evaluateResult.latency,
+          totalDuration: duration,
           answerLength: evaluateResult.answer.length,
-                  sessionId,
         },
-        '[Evaluate] ✅ Evaluation complete'
+        'Evaluation completed'
       );
 
       reply.type('application/json');
@@ -362,20 +414,25 @@ export async function createServer(): Promise<FastifyInstance> {
         },
       };
     } catch (error) {
-      server.log.error(error, '[Evaluate] ❌ Evaluation failed');
+      const duration = Date.now() - startTime;
+      
+      server.log.error({ 
+        endpoint: '/evaluate',
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration,
+      }, 'Evaluation failed');
+      
       reply.status(500);
-      const msg = error instanceof Error ? error.message : 'unknown error';
       return {
         success: false,
         error: 'Evaluation failed',
-        message: msg,
+        message: error instanceof Error ? error.message : 'unknown error',
       };
     }
   });
 
-  /**
-   * POST /classify - Query classification endpoint
-   */
   server.post<{ Body: { query: string } }>('/classify', {
     schema: {
       body: {
@@ -387,19 +444,32 @@ export async function createServer(): Promise<FastifyInstance> {
       },
     }
   }, async (request, reply) => {
+    const startTime = Date.now();
+    const { query } = request.body;
+
     try {
-      const { query } = request.body;
+      server.log.info(
+        { 
+          endpoint: '/classify',
+          queryPreview: query.substring(0, 100),
+          queryLength: query.length,
+        },
+        'Classification request received'
+      );
+
       const result = await classifier.classify(query);
+      const duration = Date.now() - startTime;
 
       server.log.info(
         {
-          query,
+          endpoint: '/classify',
           subject: result.subject,
           level: result.level,
           confidence: result.confidence,
           intent: (result as any).intent,
+          duration,
         },
-        '✓ Classification result with intent'
+        'Classification completed'
       );
 
       reply.type('application/json');
@@ -415,16 +485,23 @@ export async function createServer(): Promise<FastifyInstance> {
         },
       };
     } catch (error) {
-      server.log.error(error, 'Classification failed');
+      const duration = Date.now() - startTime;
+      
+      server.log.error({ 
+        endpoint: '/classify',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration,
+      }, 'Classification failed');
+      
       reply.status(500);
-      const msg = error instanceof Error ? error.message : 'unknown';
-      return { success: false, error: msg };
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'unknown' 
+      };
     }
   });
 
-  /**
-   * POST /rerank - Reranker endpoint
-   */
   server.post<{
     Body: {
       documents: Document[];
@@ -432,32 +509,47 @@ export async function createServer(): Promise<FastifyInstance> {
       topK?: number;
     };
   }>('/rerank', async (request, reply) => {
+    const startTime = Date.now();
+    const { documents, query, topK } = request.body;
+
+    if (!documents || documents.length === 0) {
+      server.log.warn({ endpoint: '/rerank' }, 'Empty documents array received');
+      reply.status(400);
+      return { error: 'Documents array is required and cannot be empty' };
+    }
+
+    if (!query || query.trim() === '') {
+      server.log.warn({ endpoint: '/rerank' }, 'Empty query received');
+      reply.status(400);
+      return { error: 'Query string is required and cannot be empty' };
+    }
+
     try {
-      const { documents, query, topK } = request.body;
-
-      if (!documents || documents.length === 0) {
-        reply.status(400);
-        return { error: 'Documents array is required and cannot be empty' };
-      }
-
-      if (!query || query.trim() === '') {
-        reply.status(400);
-        return { error: 'Query string is required and cannot be empty' };
-      }
-
       server.log.info(
-        { docCount: documents.length, query: query.substring(0, 50), topK },
-        '[Server] Reranking request received'
+        { 
+          endpoint: '/rerank',
+          docCount: documents.length,
+          queryPreview: query.substring(0, 50),
+          topK: topK || documents.length,
+        },
+        'Reranking request received'
       );
 
       const rerankerConfig = modelConfigService.getRerankerConfig();
       const reranker = container.getReranker();
-
       const rerankedResults = await reranker.rerank(documents, query, topK);
 
+      const duration = Date.now() - startTime;
+
       server.log.info(
-        { originalCount: documents.length, rerankedCount: rerankedResults.length },
-        '[Server] Reranking completed'
+        { 
+          endpoint: '/rerank',
+          originalCount: documents.length,
+          rerankedCount: rerankedResults.length,
+          model: rerankerConfig.modelId,
+          duration,
+        },
+        'Reranking completed'
       );
 
       reply.type('application/json');
@@ -476,22 +568,34 @@ export async function createServer(): Promise<FastifyInstance> {
         })),
       };
     } catch (error) {
-      server.log.error(error, '[Server] Reranking failed');
+      const duration = Date.now() - startTime;
+      
+      server.log.error({ 
+        endpoint: '/rerank',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration,
+      }, 'Reranking failed');
+      
       reply.status(500);
-      const msg = error instanceof Error ? error.message : 'unknown';
-      return { success: false, error: msg };
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'unknown' 
+      };
     }
   });
 
-  /**
-   * Graceful shutdown
-   */
-  const gracefulShutdown = () => {
-    server.log.info('Received shutdown signal, starting graceful shutdown...');
-    server.close(() => {
-      server.log.info('Server closed successfully');
+  const gracefulShutdown = async () => {
+    server.log.info({ signal: 'SIGTERM/SIGINT' }, 'Shutdown signal received');
+    
+    try {
+      await server.close();
+      server.log.info('Server closed gracefully');
       process.exit(0);
-    });
+    } catch (error) {
+      server.log.error({ error }, 'Error during shutdown');
+      process.exit(1);
+    }
   };
 
   process.on('SIGTERM', gracefulShutdown);
@@ -500,31 +604,33 @@ export async function createServer(): Promise<FastifyInstance> {
   return server;
 }
 
-/**
- * Start the server
- */
 async function startServer() {
   try {
     const server = await createServer();
 
-    // Start listening
     await server.listen({
       port: appConfig.port,
       host: '0.0.0.0',
     });
 
-    server.log.info(`🚀 AI Tutor Service running on http://localhost:${appConfig.port}`);
-    server.log.info(`📊 Health check: http://localhost:${appConfig.port}/health`);
-    server.log.info(`🔄 Ready check: http://localhost:${appConfig.port}/ready`);
+    server.log.info({ 
+      port: appConfig.port,
+      host: '0.0.0.0',
+      env: appConfig.nodeEnv,
+      endpoints: ['/chat', '/evaluate', '/evaluate/stream', '/classify', '/rerank', '/health', '/ready'],
+    }, 'Server started successfully');
 
     return server;
   } catch (error) {
-    console.error('Failed to start server:', error);
+    const logger = pino({ level: 'error' });
+    logger.error({ 
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    }, 'Failed to start server');
     process.exit(1);
   }
 }
 
-// Start server if this file is run directly
 if (import.meta.url.endsWith('server.ts')) {
   startServer();
 }
