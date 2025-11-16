@@ -1,10 +1,16 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import { Client } from 'langsmith';
 import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
 import { ChatRequest, AITutorResponse, Classification, Document } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
 import pino from 'pino';
+
+// Initialize LangSmith client for tracing
+const langsmithClient = new Client({
+  apiKey: process.env.LANGCHAIN_API_KEY,
+});
 
 export async function createServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -16,6 +22,12 @@ export async function createServer(): Promise<FastifyInstance> {
     keepAliveTimeout: 60_000,
     requestTimeout: 30_000,
   });
+
+  if (process.env.LANGCHAIN_TRACING_V2 === 'true') {
+    server.log.info('LangSmith tracing enabled');
+  } else {
+    server.log.info('LangSmith tracing disabled');
+  }
 
   const logger = pino({ 
     level: appConfig.logLevel,
@@ -377,7 +389,7 @@ export async function createServer(): Promise<FastifyInstance> {
       );
 
       const tutorChain = container.getTutorChain();
-      const evaluateResult = await tutorChain.evaluate(
+      const evaluateResult = await (tutorChain as any).evaluate(
         userQuery,
         classification,
         documents,
