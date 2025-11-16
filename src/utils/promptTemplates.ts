@@ -51,7 +51,7 @@ Provide a confidence score (0.0 to 1.0) indicating your certainty.
 You MUST respond with ONLY a valid JSON object. Do not include any text before or after the JSON.
 The JSON must have these fields: subject, level, confidence, reasoning (optional), intent, expectedFormat.
 
-Example response: {"subject": "math", "level": "intermediate", "confidence": 0.9, "intent": "step_by_step_explanation", "expectedFormat": "Numbered steps with LaTeX formulas and verification", "reasoning": "Trigonometry problem asking for solution steps"}`;
+Example response: {{"subject": "math", "level": "intermediate", "confidence": 0.9, "intent": "step_by_step_explanation", "expectedFormat": "Numbered steps with LaTeX formulas and verification", "reasoning": "Trigonometry problem asking for solution steps"}}`;
 }
 
 /**
@@ -78,16 +78,16 @@ export function buildEnhancedPrompt(
     [
       'system',
       `You are an expert tutor specialized in ${classification.subject} at ${classification.level} level.
-${prefsBlock}
-${intentGuidance}
-Provide accurate, helpful answers. Cite sources when using provided examples.
-Always format responses according to the intent guidance above.`
+        ${prefsBlock}
+        ${intentGuidance}
+        Provide accurate, helpful answers. Cite sources when using provided examples.
+        Always format responses according to the intent guidance above.`
     ],
     [
       'human',
       `Question: {query}
-${shotExample}
-Please provide a response following the intent guidance.`
+      ${shotExample}
+      Please provide a response following the intent guidance.`
     ]
   ]);
 }
@@ -132,7 +132,7 @@ export function buildEvaluationPrompt(
         const title = (topDocument.metadata && (topDocument.metadata as any).title) || topDocument.id;
         const linkPart = url ? ` (Link: ${url})` : '';
         const header = `\n[REFERENCE MATERIAL]\nSource: ${title}${linkPart}\n`;
-        const body = `${topDocument.text.substring(0, 240)}\n`;
+        const body = `${(topDocument.text || '').substring(0, 240)}\n`;
         return header + body;
       })()
     : '';
@@ -179,7 +179,39 @@ Provide your response in the format specified above, using the conversation hist
   // Return as plain text prompt
   return `${systemMessage}\n\n${humanMessage}`;
 }
+export function buildStandaloneRewritePrompt(): string {
+  return `You are an expert at converting context-dependent queries into standalone, self-contained questions.
 
+Your task is to rewrite a query to be completely understandable WITHOUT any conversation context.
+
+**Rewriting Rules:**
+
+1. Preserve the exact intent and complexity of the original question
+2. Include necessary context from the conversation history
+3. Make it grammatically complete and clear
+4. Keep it concise and focused
+5. If the query is already standalone, return it unchanged
+
+**Important:**
+- Output ONLY the rewritten query, nothing else
+- Do NOT include explanations, quotation marks, or preambles
+- The output should be a single query/question
+
+**Example 1:**
+Original: "What about their economy?"
+History: "User asked about Japan"
+Rewritten: "What about Japan's economy?"
+
+**Example 2:**
+Original: "Can you explain it more?"
+History: "Previous topic was photosynthesis"
+Rewritten: "Can you explain photosynthesis in more detail?"
+
+**Example 3:**
+Original: "Is mitochondria the powerhouse of the cell?"
+History: (any or none)
+Rewritten: "Is mitochondria the powerhouse of the cell?" (already standalone)`;
+}
 /**
  * Get response format based on user intent
  */

@@ -1,4 +1,5 @@
 import { CohereRerank } from '@langchain/cohere';
+import { traceable } from 'langsmith/traceable'
 import { Document as LangChainDocument } from '@langchain/core/documents';
 import { Document, RerankerResult } from '../types/index.js';
 import pino from 'pino';
@@ -29,13 +30,14 @@ export class Reranker {
     );
   }
 
-  async rerank(
+  rerank = traceable(
+    async(
     documents: Document[],
     query: string,
     topK = 3
-  ): Promise<RerankerResult[]> {
+  ): Promise<RerankerResult[]> => {
     this.logger.info(
-      { docCount: documents.length, topK, query: query.substring(0, 50) },
+      { docCount: documents.length, topK, query: typeof query === 'string' ? query.substring(0,50) : String(query)},
       '[Reranker] Starting reranking'
     );
 
@@ -120,5 +122,6 @@ export class Reranker {
         reason: 'Fallback (rerank error)',
       }));
     }
-  }
+  }, { name: 'CohereReranker', run_type: 'chain' }
+  )
 }
