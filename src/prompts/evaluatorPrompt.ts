@@ -1,7 +1,7 @@
 import { ILLM } from '../llm/ILLM.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
 import { createTierLLM } from '../llm/tierLLM.js';
-import { Classification, Document, LLMOptions } from '../types/index.js';
+import { Classification, Document, LLMOptions, BaseMessage } from '../types/index.js';
 import { buildEvaluationPrompt } from '../utils/promptTemplates.js';
 import { modelConfigService } from '../config/modelConfig.js';
 import pino from 'pino';
@@ -37,6 +37,8 @@ export interface EvaluatePromptInput {
   topDocument: Document | null;
   userPrefs?: Record<string, any>;
   subscription?: string;
+  conversationHistory?: string;
+  userName?: string | null;
 }
 
 export interface EvaluatePromptOutput {
@@ -153,7 +155,9 @@ export class EvaluatePrompt {
         input.classification,
         input.topDocument,
         (input.classification as any).intent || 'factual_retrieval',
-        input.userPrefs
+        input.userPrefs,
+        input.conversationHistory,
+        input.userName
       );
 
       this.logger.debug(
@@ -277,7 +281,9 @@ export class EvaluatePrompt {
         input.classification,
         input.topDocument,
         (input.classification as any).intent || 'factual_retrieval',
-        input.userPrefs
+        input.userPrefs,
+        input.conversationHistory,
+        input.userName
       );
 
       this.logger.debug(
