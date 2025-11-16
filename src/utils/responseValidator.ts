@@ -27,31 +27,31 @@ export function validateResponse(response: string): ValidationResult {
 
   // Check for failure indicators (case-insensitive)
   const failurePatterns = [
-    // Direct refusals
+    // Direct refusals (first-person only - "I cannot")
     /unfortunately[,\s]+i\s+(don't|do not|cannot|can't|am unable)/i,
     /i\s+(don't|do not|cannot|can't)\s+have\s+(enough\s+)?information/i,
     /i\s+(cannot|can't|am unable to)\s+help\s+with/i,
     /i\s+(cannot|can't|am unable to)\s+(answer|provide|assist)/i,
     
-    // Apologies for inability
+    // Apologies for inability (first-person)
     /sorry[,\s]+(but\s+)?i\s+(don't|cannot|can't)/i,
     /apologies[,\s]+(but\s+)?i\s+(don't|cannot|can't)/i,
     /i apologize[,\s]+(but\s+)?i\s+(don't|cannot|can't)/i,
     
-    // Not enough context
+    // Not enough context (first-person)
     /i\s+need\s+more\s+(information|context|details)/i,
     /could\s+you\s+please\s+provide\s+more/i,
     /insufficient\s+information/i,
     
-    // Out of scope
+    // Out of scope (first-person)
     /outside\s+(my|the)\s+(scope|domain|expertise)/i,
     /not\s+within\s+my\s+(capabilities|scope)/i,
     /i\s+am\s+not\s+(designed|built|trained)\s+to/i,
     
-    // Error indicators
-    /error\s+occurred/i,
-    /something\s+went\s+wrong/i,
-    /failed\s+to\s+(process|generate|retrieve)/i,
+    // System/processing errors (NOT user-facing error explanations)
+    /^error\s+occurred/i,
+    /^something\s+went\s+wrong/i,
+    /^failed\s+to\s+(process|generate|retrieve)/i,
     
     // Empty or placeholder responses
     /^(n\/a|na|null|undefined|none)$/i,
