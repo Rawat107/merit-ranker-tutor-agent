@@ -1,11 +1,10 @@
 import pino from 'pino';
-import { RunnableLambda } from '@langchain/core/runnables';
 import { ModelSelector } from '../llm/ModelSelector.js';
 import { Classifier } from '../classifier/Classifier.js';
 import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
 import { Reranker } from '../reranker/Reranker.js';
 import { EvaluatePrompt } from '../prompts/evaluatorPrompt.js';
-import { createTutorChain } from '../chains/questionChat.js'; // ← Import the factory function
+import { createTutorChain } from '../chains/questionChat.js';
 import { ChatMemory } from '../cache/ChatMemory.js';
 import { createClient } from 'redis';
 import { appConfig } from '../config/modelConfig.js';

@@ -1,4 +1,3 @@
-// chains/questionChat.ts - COMPLETE with RunnableSequence + evaluateStreaming
 
 import { RunnableSequence } from "@langchain/core/runnables";
 import { Classification, Document, ChatRequest, AITutorResponse } from '../types/index.js';
@@ -7,10 +6,8 @@ import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
 import { Reranker } from '../reranker/Reranker.js';
 import { EvaluatePrompt, EvaluatePromptInput, EvaluatePromptOutput } from '../prompts/evaluatorPrompt.js';
-import { RedisCache } from '../cache/RedisCache.js'; // ← ADD THIS
+import { RedisCache } from '../cache/RedisCache.js'; 
 import { ChatMemory } from '../cache/ChatMemory.js';
-import { createClient } from 'redis'; // ← ADD THIS
-import { appConfig } from '../config/modelConfig.js'; // ← ADD THIS
 import { webSearchTool } from '../tools/webSearch.js';
 import { validateResponse } from '../utils/responseValidator.js';
 import pino from 'pino';
@@ -40,7 +37,7 @@ export class TutorChain {
     private logger: pino.Logger
   ) {
     // Initialize RedisCache
-    this.redisCache = new RedisCache(logger); // ← ADD THIS
+    this.redisCache = new RedisCache(logger); 
     
     // Build the RunnableSequence
     this.sequence = this.buildSequence();

@@ -7,10 +7,6 @@ import { ChatRequest, AITutorResponse, Classification, Document } from './types/
 import { Classifier } from './classifier/Classifier.js';
 import pino from 'pino';
 
-// Initialize LangSmith client for tracing
-const langsmithClient = new Client({
-  apiKey: process.env.LANGCHAIN_API_KEY,
-});
 
 export async function createServer(): Promise<FastifyInstance> {
   const server = Fastify({
