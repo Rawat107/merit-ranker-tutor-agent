@@ -11,12 +11,12 @@ import pino from 'pino';
 export class Reranker {
   private cohereRerank: CohereRerank;
 
-  constructor(private logger: pino.Logger) {
+  constructor(private logger: pino.Logger, private cohereApiKey: string) {
     this.logger = logger;
 
     // Initialize Cohere Rerank
     this.cohereRerank = new CohereRerank({
-      apiKey: process.env.COHERE_API_KEY,
+      apiKey: this.cohereApiKey,
       model: 'rerank-english-v3.0', // Latest model
       topN: 10, // We'll filter this later based on topK parameter
     });

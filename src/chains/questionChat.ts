@@ -34,8 +34,10 @@ export class TutorChain {
     private reranker: Reranker,
     private evaluatePrompt: EvaluatePrompt,
     private chatMemory: ChatMemory,
-    private logger: pino.Logger
+    private logger: pino.Logger,
+    private secrets: any 
   ) {
+
     // Initialize RedisCache
     this.redisCache = new RedisCache(logger); 
     
@@ -108,7 +110,7 @@ export class TutorChain {
 
         if (isCurrentAffairs) {
           this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-          retrievedDocs = await webSearchTool(input.message, input.classification.subject, this.logger);
+          retrievedDocs = await webSearchTool(input.message, input.classification.subject, this.secrets.tavilyApiKey, this.logger);
         } else {
           this.logger.info('[TutorChain] Route: Knowledge Base');
           retrievedDocs = await this.retriever.getRelevantDocuments(input.message, {
@@ -120,7 +122,7 @@ export class TutorChain {
           const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score ? retrievedDocs[0].score : 0;
           if (retrievedDocs.length === 0 || topScore < 0.5) {
             this.logger.warn('[TutorChain] Fallback to web search');
-            const webDocs = await webSearchTool(input.message, input.classification.subject, this.logger);
+            const webDocs = await webSearchTool(input.message, input.classification.subject, this.secrets.tavilyApiKey, this.logger);
             if (webDocs.length > 0) retrievedDocs = webDocs;
           }
         }
@@ -484,7 +486,10 @@ export function createTutorChain(
   reranker: Reranker,
   evaluatePrompt: EvaluatePrompt,
   chatMemory: ChatMemory,
-  logger: pino.Logger
+  logger: pino.Logger,
+  secrets: any 
 ): TutorChain {
-  return new TutorChain(classifier, retriever, modelSelector, reranker, evaluatePrompt, chatMemory, logger);
+  return new TutorChain(classifier, retriever, modelSelector, reranker, evaluatePrompt, chatMemory, logger, secrets);
 }
+
+

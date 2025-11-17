@@ -1,12 +1,12 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-import { Client } from 'langsmith';
+import rateLimit from '@fastify/rate-limit';
 import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
-import { ChatRequest, AITutorResponse, Classification, Document } from './types/index.js';
+import { ChatRequest, Classification, Document } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
+import { loadAllSecrets } from './lib/secrets.js';
 import pino from 'pino';
-
 
 export async function createServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -19,7 +19,7 @@ export async function createServer(): Promise<FastifyInstance> {
     requestTimeout: 30_000,
   });
 
-  if (process.env.LANGCHAIN_TRACING_V2 === 'true') {
+  if (process.env.LANGCHAIN_TRACING === 'true') {
     server.log.info('LangSmith tracing enabled');
   } else {
     server.log.info('LangSmith tracing disabled');
@@ -35,10 +35,35 @@ export async function createServer(): Promise<FastifyInstance> {
     credentials: true,
   });
 
+  // Rate limiting
+  await server.register(rateLimit, {
+    max: 100,
+    timeWindow: '10 minute',
+    cache: 10000, 
+    allowList: ['127.0.0.1'],
+    errorResponseBuilder: (req, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `You have exceeded the maximum request limit. Retry in ${Math.ceil(context.ttl / 1000)}s`,
+    })
+  });
+
+  server.log.info('Rate limiting configured');
+
+  // Load secrets from AWS Secrets Manager (production) or .env (development)
+  server.log.info('Loading secrets...');
+  const secrets = await loadAllSecrets();
+  server.decorate('secrets', secrets);
+  server.log.info('✅ Secrets loaded successfully');
+
   server.log.info({ env: appConfig.nodeEnv, logLevel: appConfig.logLevel }, 'Initializing server');
 
   const container = createContainer(logger);
+  await container.initialize(); 
   const classifier = new Classifier(logger);
+
+server.log.info('Container and classifier initialized');
+
 
   server.log.info('Container and classifier initialized');
 
@@ -644,3 +669,19 @@ if (import.meta.url.endsWith('server.ts')) {
 }
 
 export { startServer };
+
+// Type augmentation for secrets
+declare module 'fastify' {
+  interface FastifyInstance {
+    secrets: {
+      cohereApiKey: string;
+      tavilyApiKey: string;
+      langsmithApiKey: string;
+      bedrockApiKey: string;
+      redisUrl: string;
+      redisPassword: string;
+      awsAccessKeyId: string;
+      awsSecretAccessKey: string;
+    };
+  }
+}

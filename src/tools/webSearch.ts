@@ -1,6 +1,7 @@
 import { TavilySearch, type TopicType, type SearchDepth } from "@langchain/tavily";
 import pino from 'pino';
 import { Document } from '../types/index.js';
+import { tr } from "zod/v4/locales";
 
 /**
  * Clean and extract meaningful text from content
@@ -49,7 +50,7 @@ function cleanContent(text: string): string {
 /**
  * Initialize Tavily search tool with LangChain
  */
-function initializeTavilyTool(subject: string, logger?: pino.Logger): TavilySearch {
+function initializeTavilyTool(subject: string, tavilyApiKey: string, logger?: pino.Logger): TavilySearch {
   const topicMap: Record<string, TopicType> = {
     current_affairs: 'news',
     general_knowledge: 'general',
@@ -67,7 +68,7 @@ function initializeTavilyTool(subject: string, logger?: pino.Logger): TavilySear
 
   return new TavilySearch({
     maxResults: 5,
-    tavilyApiKey: process.env.TAVILY_API_KEY || '',
+    tavilyApiKey: tavilyApiKey || '',
     includeRawContent: false,
     searchDepth: searchDepth,
     topic: topic,
@@ -81,6 +82,7 @@ function initializeTavilyTool(subject: string, logger?: pino.Logger): TavilySear
 export async function webSearchTool(
   query: string,
   subject: string = 'general',
+  tavilyApiKey: string,
   logger?: pino.Logger
 ): Promise<Document[]> {
   logger?.info(
@@ -88,7 +90,7 @@ export async function webSearchTool(
     '[Tavily] Initiating web search'
   );
 
-  if (!process.env.TAVILY_API_KEY) {
+  if (!tavilyApiKey) {
     logger?.warn('[Tavily] TAVILY_API_KEY not set - returning empty results');
     logger?.warn('[Tavily] Set TAVILY_API_KEY in .env to enable web search');
     return [];
@@ -107,7 +109,7 @@ export async function webSearchTool(
       );
     }
 
-    const tavilyTool = initializeTavilyTool(subject, logger);
+    const tavilyTool = initializeTavilyTool(subject, tavilyApiKey, logger);
     const searchResults = await tavilyTool.invoke({ query: truncatedQuery });
 
     let results: any[] = [];
