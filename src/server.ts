@@ -582,10 +582,13 @@ export async function createServer(): Promise<FastifyInstance> {
     const { documents, query, topK } = request.body;
 
     if (!documents || documents.length === 0) {
-      server.log.warn({ endpoint: '/rerank' }, 'Empty documents array received');
-      reply.status(400);
-      return { error: 'Documents array is required and cannot be empty' };
-    }
+    server.log.warn({ endpoint: '/rerank' }, 'No documents to rerank');
+    reply.status(400);
+    return { 
+      error: 'No documents provided for reranking',
+      success: false 
+    };
+  }
 
     if (!query || query.trim() === '') {
       server.log.warn({ endpoint: '/rerank' }, 'Empty query received');

@@ -73,65 +73,62 @@ export class TutorChain {
         },
       },
 
-      // STEP 2: Classify query (with standalone rewriting built-in)
       async (input: any) => {
-        try {
-          const classification = await this.classifier.classify(
-            input.message,
-            input.conversationHistory
-          );
-
-          this.logger.info(
-            { subject: classification.subject, level: classification.level, confidence: classification.confidence },
-            '[TutorChain] Classification complete'
-          );
-
-          return {
-            message: input.message,
-            sessionId: input.sessionId,
-            subject: input.subject,
-            level: input.level,
-            conversationHistory: input.conversationHistory,
-            classification,
-          };
-        } catch (error) {
-          this.logger.error({ error, query: input.message }, '[TutorChain] Classification failed');
-          throw error;
-        }
-      },
-
-      // STEP 3: Retrieve documents
-      async (input: any) => {
+      try {
+        // Launch both classification and (conditional) document retrieval in parallel
         const isCurrentAffairs =
-          input.classification.subject === 'current_affairs' ||
-          input.classification.subject === 'general_knowledge';
+          input.subject === 'current_affairs' || input.subject === 'general_knowledge';
 
-        let retrievedDocs: Document[] = [];
+        const classifyPromise = this.classifier.classify(
+          input.message,
+          input.conversationHistory
+        );
 
+        let retrievePromise;
         if (isCurrentAffairs) {
-          this.logger.info('[TutorChain] Route: Web Search (Current Affairs)');
-          retrievedDocs = await webSearchTool(input.message, input.classification.subject, this.secrets.tavilyApiKey, this.logger);
+          retrievePromise = webSearchTool(
+            input.message,
+            input.subject || 'general_knowledge',
+            this.secrets.tavilyApiKey,
+            this.logger
+          );
         } else {
-          this.logger.info('[TutorChain] Route: Knowledge Base');
-          retrievedDocs = await this.retriever.getRelevantDocuments(input.message, {
-            subject: input.classification.subject,
-            level: input.classification.level,
-            k: 5,
-          });
-
-          const topScore = retrievedDocs.length > 0 && retrievedDocs[0]?.score ? retrievedDocs[0].score : 0;
-          if (retrievedDocs.length === 0 || topScore < 0.5) {
-            this.logger.warn('[TutorChain] Fallback to web search');
-            const webDocs = await webSearchTool(input.message, input.classification.subject, this.secrets.tavilyApiKey, this.logger);
-            if (webDocs.length > 0) retrievedDocs = webDocs;
-          }
+          retrievePromise = this.retriever.getRelevantDocuments(
+            input.message,
+            {
+              subject: input.subject,
+              level: input.level,
+              k: 5,
+            }
+          );
         }
 
-        this.logger.info({ count: retrievedDocs.length }, '[TutorChain] Retrieval complete');
+        // Wait for both in parallel
+        const [classification, retrievedDocs] = await Promise.all([
+          classifyPromise,
+          retrievePromise,
+        ]);
 
-        // IMPORTANT: return on a single, consistent key
-        return { ...input, retrievedDocs };
-      },
+        // Fallback to web search if KB retrieval weak, as in your original logic
+        let finalDocs = retrievedDocs;
+        if (!isCurrentAffairs && (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5)) {
+          this.logger.warn('[TutorChain] Fallback to web search');
+          finalDocs = await webSearchTool(
+            input.message,
+            classification.subject,
+            this.secrets.tavilyApiKey,
+            this.logger
+          );
+        }
+
+        this.logger.info({ subject: classification.subject, level: classification.level, confidence: classification.confidence }, '[TutorChain] Classification complete');
+        this.logger.info({ count: finalDocs.length }, '[TutorChain] Retrieval complete');
+        return { ...input, classification, retrievedDocs: finalDocs };
+      } catch (error) {
+        this.logger.error({ error, query: input.message }, '[TutorChain] Parallel classify/retrieve failed');
+        throw error;
+      }
+    },
 
       // STEP 4: Rerank documents (documents-first)
       async (input: any) => {
@@ -234,24 +231,115 @@ export class TutorChain {
   }
 
   /**
-   * Run the chain
-   */
-  async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
-    try {
-      const input = {
-        message: request.message,
-        sessionId: sessionId || request.sessionId,
-        subject: request.subject,
-        level: request.level,
-      };
+ * Run the chain
+ */
+async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
+  try {
+    const input = {
+      message: request.message,
+      sessionId: sessionId || request.sessionId,
+      subject: request.subject,
+      level: request.level,
+    };
 
-      const result = await this.sequence.invoke(input);
-      return result;
-    } catch (error) {
-      this.logger.error({ error }, '[TutorChain] Run failed');
-      throw error;
+    //check cache first
+    this.logger.debug({ query: input.message.substring(0, 50) }, 'Checking cache before pipeline...');
+
+    // 1. Check Direct Cache (exact match)
+    const directCache = await this.redisCache.checkDirectCache(
+      input.message,
+      input.subject || 'general'
+    );
+
+    if (directCache) {
+      this.logger.info('✓ DIRECT CACHE HIT - returning instantly');
+      return {
+        answer: directCache.response,
+        classification: {
+          subject: directCache.metadata.subject || input.subject || 'general',
+          level: directCache.metadata.level || input.level || 'intermediate',
+          confidence: directCache.metadata.confidence || 1.0,
+        },
+        cached: true,
+        confidence: directCache.metadata.confidence || 1.0,
+        metadata: {
+          modelUsed: directCache.metadata.modelUsed || 'cached',
+          validationScore: 1.0,
+        },
+      } as AITutorResponse;
     }
+
+    // 2. Check Semantic Cache (similarity match)
+    const semanticCache = await this.redisCache.checkSemanticCache(
+      input.message,
+      input.subject || 'general'
+    );
+
+    if (semanticCache) {
+      this.logger.info({ score: semanticCache.score }, '✓ SEMANTIC CACHE HIT - returning instantly');
+      return {
+        answer: semanticCache.response,
+        classification: {
+          subject: semanticCache.metadata.subject || input.subject || 'general',
+          level: semanticCache.metadata.level || input.level || 'intermediate',
+          confidence: semanticCache.metadata.confidence || semanticCache.score,
+        },
+        cached: true,
+        confidence: semanticCache.score,
+        metadata: {
+          modelUsed: semanticCache.metadata.modelUsed || 'cached',
+          validationScore: semanticCache.score,
+        },
+      } as AITutorResponse;
+    }
+
+    this.logger.debug('Cache miss - running full pipeline...');
+
+    // no cache hit - run full sequence
+    const result = await this.sequence.invoke(input);
+
+    // caching logic, store after generation
+    if (result.answer) {
+      const validation = validateResponse(result.answer);
+      
+      if (validation.isValid) {
+        this.logger.info({ score: validation.score }, 'Caching response after generation');
+        
+        await Promise.all([
+          this.redisCache.storeDirectCache(
+            input.message,
+            result.answer,
+            result.classification.subject,
+            {
+              confidence: result.classification.confidence,
+              modelUsed: result.metadata?.modelUsed,
+              level: result.classification.level,
+            }
+          ),
+          this.redisCache.storeSemanticCache(
+            input.message,
+            result.answer,
+            result.classification.subject,
+            {
+              confidence: result.classification.confidence,
+              modelUsed: result.metadata?.modelUsed,
+              level: result.classification.level,
+            }
+          ),
+        ]);
+        
+        this.logger.info('✓ Stored in both caches');
+      } else {
+        this.logger.warn({ reason: validation.reason }, 'Skipped caching - quality check failed');
+      }
+    }
+
+    return result;
+  } catch (error) {
+    this.logger.error({ error }, '[TutorChain] Run failed');
+    throw error;
   }
+}
 
   /**
    * Stream the chain results
