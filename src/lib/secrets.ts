@@ -12,6 +12,7 @@ interface AppSecrets {
   redisPassword: string;
   awsAccessKeyId: string;
   awsSecretAccessKey: string;
+  apiKeys: string[];
 }
 
 const client = new SecretsManagerClient({ 
@@ -36,6 +37,7 @@ export async function loadAllSecrets(): Promise<AppSecrets> {
       redisPassword: process.env.REDIS_PASSWORD || '',
       awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
       awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      apiKeys: (process.env.API_KEYS || 'test-123').split(','),
     };
   }
 
@@ -46,7 +48,8 @@ export async function loadAllSecrets(): Promise<AppSecrets> {
     langsmithSecret,
     bedrockSecret,
     redisSecret,
-    awsCredsSecret
+    awsCredsSecret,
+    apiKeysSecret,
   ] = await Promise.all([
     loadSecret('prod/tutor-agent/cohere-apiKey'),
     loadSecret('prod/tutor-agent/tavily-api-key'),
@@ -54,6 +57,7 @@ export async function loadAllSecrets(): Promise<AppSecrets> {
     loadSecret('prod/tutor-agent/bedrock-api-key'),
     loadSecret('prod/tutor-agent/redis-cretdentials'),
     loadSecret('prod/tutor-agent/aws-credentials'),
+    loadSecret('prod/tutor-agent/api-keys'),
   ]);
 
   // Parse JSON secrets
@@ -62,6 +66,7 @@ export async function loadAllSecrets(): Promise<AppSecrets> {
   const langsmith = JSON.parse(langsmithSecret);
   const redis = JSON.parse(redisSecret);
   const awsCreds = JSON.parse(awsCredsSecret);
+  const apiKeys = JSON.parse(apiKeysSecret);
 
   return {
     cohereApiKey: cohere.COHERE_API_KEY,
@@ -72,5 +77,6 @@ export async function loadAllSecrets(): Promise<AppSecrets> {
     redisPassword: redis.REDIS_PASSWORD,
     awsAccessKeyId: awsCreds.AWS_ACCESS_KEY_ID,
     awsSecretAccessKey: awsCreds.AWS_SECRET_ACCESS_KEY,
+    apiKeys: apiKeys.API_KEYS,
   };
 }
