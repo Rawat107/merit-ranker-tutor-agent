@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import FastifyAwsJwtVerify from 'fastify-aws-jwt-verify';
 import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
 import { ChatRequest, Classification, Document } from './types/index.js';
@@ -56,16 +57,35 @@ export async function createServer(): Promise<FastifyInstance> {
   server.decorate('secrets', secrets);
   server.log.info('✅ Secrets loaded successfully');
 
+  const cognitoClientId = process.env.COGNITO_CLIENT_ID;
+  const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID;
+  const cognitoRegion = process.env.COGNITO_REGION || 'ap-southeast-2';
+  if (!cognitoClientId || !cognitoUserPoolId) {
+    server.log.error(
+      { clientId: cognitoClientId, userPoolId: cognitoUserPoolId },
+      'Missing AWS Cognito configuration in environment variables'
+    );
+    throw new Error('COGNITO_CLIENT_ID and COGNITO_USER_POOL_ID must be set in environment variables');
+  }
+
+ await server.register(FastifyAwsJwtVerify as any, {
+    clientId: cognitoClientId,
+    region: cognitoRegion, 
+    tokenProvider: 'Bearer',
+    tokenUse: 'access',
+    userPoolId: cognitoUserPoolId,
+  });
+
+  server.log.info({
+    userPoolId: process.env.COGNITO_USER_POOL_ID,
+    clientId: process.env.COGNITO_CLIENT_ID,
+  }, 'AWS Cognito JWT verification configured');
+
   server.log.info({ env: appConfig.nodeEnv, logLevel: appConfig.logLevel }, 'Initializing server');
 
   const container = createContainer(logger);
   await container.initialize(); 
   const classifier = new Classifier(logger);
-
-server.log.info('Container and classifier initialized');
-
-
-  server.log.info('Container and classifier initialized');
 
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
@@ -82,6 +102,7 @@ server.log.info('Container and classifier initialized');
   });
 
   server.post<{ Body: ChatRequest }>('/chat', {
+    onRequest: server.auth.require(),
     schema: {
       body: {
         type: 'object',
@@ -165,6 +186,7 @@ server.log.info('Container and classifier initialized');
       sessionId?: string;
     };
   }>('/evaluate/stream', {
+    onRequest: server.auth.require(),
     schema: {
       body: {
         type: 'object',
@@ -338,135 +360,137 @@ server.log.info('Container and classifier initialized');
     }
   });
 
-  server.post<{
-    Body: {
-      userQuery: string;
-      classification: Classification;
-      documents: Document[];
-      userSubscription?: string;
-      sessionId?: string;
-    };
-  }>('/evaluate', {
-    schema: {
-      body: {
-        type: 'object',
-        required: ['userQuery', 'classification', 'documents'],
-        properties: {
-          userQuery: { type: 'string' },
-          classification: {
-            type: 'object',
-            properties: {
-              subject: { type: 'string' },
-              level: { type: 'string' },
-              confidence: { type: 'number' },
-              intent: { type: 'string' },
-            },
-          },
-          documents: {
-            type: 'array',
-            items: { type: 'object' },
-          },
-          userSubscription: { type: 'string' },
-          sessionId: { type: 'string' },
-        },
-      },
-    }
-  }, async (request, reply) => {
-    const startTime = Date.now();
-    const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
+  // server.post<{
+  //   Body: {
+  //     userQuery: string;
+  //     classification: Classification;
+  //     documents: Document[];
+  //     userSubscription?: string;
+  //     sessionId?: string;
+  //   };
+  // }>('/evaluate', {
+  //   onRequest: server.auth.require(),
+  //   schema: {
+  //     body: {
+  //       type: 'object',
+  //       required: ['userQuery', 'classification', 'documents'],
+  //       properties: {
+  //         userQuery: { type: 'string' },
+  //         classification: {
+  //           type: 'object',
+  //           properties: {
+  //             subject: { type: 'string' },
+  //             level: { type: 'string' },
+  //             confidence: { type: 'number' },
+  //             intent: { type: 'string' },
+  //           },
+  //         },
+  //         documents: {
+  //           type: 'array',
+  //           items: { type: 'object' },
+  //         },
+  //         userSubscription: { type: 'string' },
+  //         sessionId: { type: 'string' },
+  //       },
+  //     },
+  //   }
+  // }, async (request, reply) => {
+  //   const startTime = Date.now();
+  //   const { userQuery, classification, documents, userSubscription, sessionId } = request.body;
 
-    if (!userQuery || userQuery.trim() === '') {
-      server.log.warn({ endpoint: '/evaluate' }, 'Empty userQuery received');
-      reply.status(400);
-      return { error: 'userQuery is required and cannot be empty' };
-    }
+  //   if (!userQuery || userQuery.trim() === '') {
+  //     server.log.warn({ endpoint: '/evaluate' }, 'Empty userQuery received');
+  //     reply.status(400);
+  //     return { error: 'userQuery is required and cannot be empty' };
+  //   }
 
-    if (!classification) {
-      server.log.warn({ endpoint: '/evaluate' }, 'Missing classification');
-      reply.status(400);
-      return { error: 'classification is required' };
-    }
+  //   if (!classification) {
+  //     server.log.warn({ endpoint: '/evaluate' }, 'Missing classification');
+  //     reply.status(400);
+  //     return { error: 'classification is required' };
+  //   }
 
-    if (!Array.isArray(documents)) {
-      server.log.warn({ endpoint: '/evaluate' }, 'Invalid documents format');
-      reply.status(400);
-      return { error: 'documents must be an array' };
-    }
+  //   if (!Array.isArray(documents)) {
+  //     server.log.warn({ endpoint: '/evaluate' }, 'Invalid documents format');
+  //     reply.status(400);
+  //     return { error: 'documents must be an array' };
+  //   }
 
-    try {
-      server.log.info(
-        {
-          endpoint: '/evaluate',
-          sessionId,
-          queryPreview: userQuery.substring(0, 80),
-          subject: classification.subject,
-          level: classification.level,
-          confidence: classification.confidence,
-          intent: (classification as any).intent,
-          docCount: documents.length,
-          subscription: userSubscription || 'free',
-        },
-        'Evaluation started'
-      );
+  //   try {
+  //     server.log.info(
+  //       {
+  //         endpoint: '/evaluate',
+  //         sessionId,
+  //         queryPreview: userQuery.substring(0, 80),
+  //         subject: classification.subject,
+  //         level: classification.level,
+  //         confidence: classification.confidence,
+  //         intent: (classification as any).intent,
+  //         docCount: documents.length,
+  //         subscription: userSubscription || 'free',
+  //       },
+  //       'Evaluation started'
+  //     );
 
-      const tutorChain = container.getTutorChain();
-      const evaluateResult = await (tutorChain as any).evaluate(
-        userQuery,
-        classification,
-        documents,
-        userSubscription || 'free',
-        sessionId
-      );
+  //     const tutorChain = container.getTutorChain();
+  //     const evaluateResult = await (tutorChain as any).evaluate(
+  //       userQuery,
+  //       classification,
+  //       documents,
+  //       userSubscription || 'free',
+  //       sessionId
+  //     );
 
-      const duration = Date.now() - startTime;
+  //     const duration = Date.now() - startTime;
 
-      server.log.info(
-        {
-          endpoint: '/evaluate',
-          sessionId,
-          modelUsed: evaluateResult.modelUsed,
-          levelUsed: evaluateResult.levelUsed,
-          evaluateLatency: evaluateResult.latency,
-          totalDuration: duration,
-          answerLength: evaluateResult.answer.length,
-        },
-        'Evaluation completed'
-      );
+  //     server.log.info(
+  //       {
+  //         endpoint: '/evaluate',
+  //         sessionId,
+  //         modelUsed: evaluateResult.modelUsed,
+  //         levelUsed: evaluateResult.levelUsed,
+  //         evaluateLatency: evaluateResult.latency,
+  //         totalDuration: duration,
+  //         answerLength: evaluateResult.answer.length,
+  //       },
+  //       'Evaluation completed'
+  //     );
 
-      reply.type('application/json');
-      return {
-        success: true,
-        data: {
-          answer: evaluateResult.answer,
-          modelUsed: evaluateResult.modelUsed,
-          levelUsed: evaluateResult.levelUsed,
-          latency: evaluateResult.latency,
-          classification,
-          sources: documents,
-          sessionId,
-        },
-      };
-    } catch (error) {
-      const duration = Date.now() - startTime;
+  //     reply.type('application/json');
+  //     return {
+  //       success: true,
+  //       data: {
+  //         answer: evaluateResult.answer,
+  //         modelUsed: evaluateResult.modelUsed,
+  //         levelUsed: evaluateResult.levelUsed,
+  //         latency: evaluateResult.latency,
+  //         classification,
+  //         sources: documents,
+  //         sessionId,
+  //       },
+  //     };
+  //   } catch (error) {
+  //     const duration = Date.now() - startTime;
       
-      server.log.error({ 
-        endpoint: '/evaluate',
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        duration,
-      }, 'Evaluation failed');
+  //     server.log.error({ 
+  //       endpoint: '/evaluate',
+  //       sessionId,
+  //       error: error instanceof Error ? error.message : String(error),
+  //       stack: error instanceof Error ? error.stack : undefined,
+  //       duration,
+  //     }, 'Evaluation failed');
       
-      reply.status(500);
-      return {
-        success: false,
-        error: 'Evaluation failed',
-        message: error instanceof Error ? error.message : 'unknown error',
-      };
-    }
-  });
+  //     reply.status(500);
+  //     return {
+  //       success: false,
+  //       error: 'Evaluation failed',
+  //       message: error instanceof Error ? error.message : 'unknown error',
+  //     };
+  //   }
+  // });
 
   server.post<{ Body: { query: string } }>('/classify', {
+    onRequest: server.auth.require(),
     schema: {
       body: {
         type: 'object',
@@ -541,7 +565,10 @@ server.log.info('Container and classifier initialized');
       query: string;
       topK?: number;
     };
-  }>('/rerank', async (request, reply) => {
+  }>('/rerank', {
+    onRequest: server.auth.require(),
+
+  }, async (request, reply) => {
     const startTime = Date.now();
     const { documents, query, topK } = request.body;
 
@@ -650,7 +677,7 @@ async function startServer() {
       port: appConfig.port,
       host: '0.0.0.0',
       env: appConfig.nodeEnv,
-      endpoints: ['/chat', '/evaluate', '/evaluate/stream', '/classify', '/rerank', '/health', '/ready'],
+      endpoints: ['/chat', '/evaluate/stream', '/classify', '/rerank', '/health', '/ready'],
     }, 'Server started successfully');
 
     return server;
@@ -682,6 +709,7 @@ declare module 'fastify' {
       redisPassword: string;
       awsAccessKeyId: string;
       awsSecretAccessKey: string;
+      apiKeys: string[];
     };
-  }
+    }
 }
