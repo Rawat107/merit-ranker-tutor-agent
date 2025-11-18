@@ -20,6 +20,15 @@ export async function createServer(): Promise<FastifyInstance> {
     requestTimeout: 30_000,
   });
 
+  if (appConfig.nodeEnv === 'development') {
+  server.addHook('onRequest', (request, reply, done) => {
+      if (!request.headers.authorization && process.env.DEV_JWT_TOKEN) {
+        request.headers.authorization = `Bearer ${process.env.DEV_JWT_TOKEN}`;
+      }
+      done();
+    });
+  }
+
   if (process.env.LANGCHAIN_TRACING === 'true') {
     server.log.info('LangSmith tracing enabled');
   } else {
