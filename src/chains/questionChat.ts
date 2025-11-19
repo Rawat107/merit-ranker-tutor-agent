@@ -1,5 +1,6 @@
 
 import { RunnableSequence } from "@langchain/core/runnables";
+import { traceable } from "langsmith/traceable";
 import { Classification, Document, ChatRequest, AITutorResponse } from '../types/index.js';
 import { Classifier } from '../classifier/Classifier.js';
 import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
@@ -25,6 +26,7 @@ const USER_PREFS = {
  */
 export class TutorChain {
   private sequence: RunnableSequence;
+  private classifyAndRetrieveChain: RunnableSequence;
   private redisCache: RedisCache; // ← ADD THIS
 
   constructor(
@@ -41,48 +43,38 @@ export class TutorChain {
     // Initialize RedisCache
     this.redisCache = new RedisCache(logger); 
     
-    // Build the RunnableSequence
+    // Build the RunnableSequences
+    this.classifyAndRetrieveChain = this.buildClassifyAndRetrieveChain();
     this.sequence = this.buildSequence();
   }
 
-  /**
-   * Build the RunnableSequence with all steps
-   */
-  private buildSequence(): RunnableSequence<any, any> {
-    return RunnableSequence.from([
-      // STEP 1: Load conversation history and pass through fields
-      {
-        message: (input: any) => input.message,
-        sessionId: (input: any) => input.sessionId,
-        subject: (input: any) => input.subject,
-        level: (input: any) => input.level,
-        conversationHistory: async (input: any) => {
-          if (!input.sessionId) {
-            return '';
-          }
-          
-          try {
-            const messages = await this.chatMemory.load(input.sessionId, 5);
-            // For standalone rewrite: only user queries, no AI responses
-            const userQueriesOnly = this.chatMemory.formatUserQueriesOnly(messages);
-            this.logger.debug('[TutorChain] Loaded user queries for standalone rewrite');
-            return userQueriesOnly;
-          } catch (error) {
-            this.logger.warn({ error, sessionId: input.sessionId }, '[TutorChain] Failed to load conversation history');
-            return '';
-          }
-        },
-
+  private buildClassifyAndRetrieveChain(): RunnableSequence<any, any> {
+    const historyAndPassthrough = {
+      message: (input: any) => input.message,
+      sessionId: (input: any) => input.sessionId,
+      subject: (input: any) => input.subject,
+      level: (input: any) => input.level,
+      conversationHistory: async (input: any) => {
+        if (!input.sessionId) {
+          return '';
+        }
+        try {
+          const messages = await this.chatMemory.load(input.sessionId, 5);
+          const userQueriesOnly = this.chatMemory.formatUserQueriesOnly(messages);
+          this.logger.debug('[TutorChain] Loaded user queries for standalone rewrite');
+          return userQueriesOnly;
+        } catch (error) {
+          this.logger.warn({ error, sessionId: input.sessionId }, '[TutorChain] Failed to load conversation history');
+          return '';
+        }
       },
-      async (input: any) => {
+    };
+
+    const classifyAndRetrieveStep = async (input: any) => {
       try {
-        // STEP 1: Get standalone query first (if history exists)
         let standaloneQuery = input.message;
-        
-        // Only rewrite if we have actual conversation history
         if (input.conversationHistory && input.conversationHistory.trim().length > 20) {
           try {
-            // Rewrite to standalone using classifier's method
             standaloneQuery = await this.classifier['rewriteToStandalone'](
               input.message,
               input.conversationHistory
@@ -93,18 +85,15 @@ export class TutorChain {
             }, '[TutorChain] Query rewritten to standalone');
           } catch (error) {
             this.logger.warn({ error }, '[TutorChain] Standalone rewrite failed, using original');
-            standaloneQuery = input.message;
           }
         } else {
           this.logger.debug('[TutorChain] No history or too short, using original query');
         }
 
-        // STEP 2: Launch classification and retrieval in parallel (both use standalone)
         const isCurrentAffairs =
           input.subject === 'current_affairs' || input.subject === 'general_knowledge';
 
         const classifyPromise = this.classifier.classify(standaloneQuery);
-
 
         let retrievePromise;
         if (isCurrentAffairs) {
@@ -125,13 +114,11 @@ export class TutorChain {
           );
         }
 
-        // Wait for both in parallel
         const [classification, retrievedDocs] = await Promise.all([
           classifyPromise,
           retrievePromise,
         ]);
 
-        // Fallback to web search if KB retrieval weak
         let finalDocs = retrievedDocs;
         if (!isCurrentAffairs && (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5)) {
           this.logger.warn('[TutorChain] Fallback to web search');
@@ -156,7 +143,22 @@ export class TutorChain {
         this.logger.error({ error, query: input.message }, '[TutorChain] Parallel classify/retrieve failed');
         throw error;
       }
-    },
+    };
+
+    return RunnableSequence.from([
+      historyAndPassthrough,
+      classifyAndRetrieveStep,
+    ]).withConfig({
+      runName: 'ClassifyAndRetrieveChain',
+    }) as RunnableSequence<any, any>;
+  }
+
+  /**
+   * Build the RunnableSequence with all steps
+   */
+  private buildSequence(): RunnableSequence<any, any> {
+    return RunnableSequence.from([
+      this.classifyAndRetrieveChain,
 
 
 
@@ -267,7 +269,7 @@ export class TutorChain {
     sessionId?: string
   ): Promise<{ classification: Classification, sources: Document[], cached: boolean, answer?: string }> {
     const { message, subject, level } = request;
-    
+
     // First, check cache like in run() method
     const directCache = await this.redisCache.checkDirectCache(
       message,
@@ -306,46 +308,13 @@ export class TutorChain {
       };
     }
 
-    // Manually run the initial parts of the chain if no cache hit
-    let standaloneQuery = message;
-    if (sessionId) {
-      const messages = await this.chatMemory.load(sessionId, 5);
-      const userQueriesOnly = this.chatMemory.formatUserQueriesOnly(messages);
-      if (userQueriesOnly && userQueriesOnly.trim().length > 20) {
-        try {
-          standaloneQuery = await this.classifier['rewriteToStandalone'](
-            message,
-            userQueriesOnly
-          );
-          this.logger.info({
-            original: message.substring(0, 60),
-            standalone: standaloneQuery.substring(0, 60)
-          }, '[TutorChain] Query rewritten to standalone');
-        } catch (error) {
-          this.logger.warn({ error }, '[TutorChain] Standalone rewrite failed, using original');
-        }
-      }
-    }
-
-    const isCurrentAffairs = subject === 'current_affairs' || subject === 'general_knowledge';
-    const classifyPromise = this.classifier.classify(standaloneQuery);
+    const result = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId });
     
-    let retrievePromise;
-    if (isCurrentAffairs) {
-      retrievePromise = webSearchTool(standaloneQuery, subject || 'general_knowledge', this.secrets.tavilyApiKey, this.logger);
-    } else {
-      retrievePromise = this.retriever.getRelevantDocuments(standaloneQuery, { subject, level, k: 5 });
-    }
-
-    const [classification, retrievedDocs] = await Promise.all([classifyPromise, retrievePromise]);
-    
-    let finalDocs = retrievedDocs;
-    if (!isCurrentAffairs && (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5)) {
-      this.logger.warn('[TutorChain] Fallback to web search');
-      finalDocs = await webSearchTool(standaloneQuery, classification.subject, this.secrets.tavilyApiKey, this.logger);
-    }
-
-    return { classification, sources: finalDocs, cached: false };
+    return { 
+        classification: result.classification, 
+        sources: result.retrievedDocs, 
+        cached: false 
+    };
   }
 
   /**
@@ -687,82 +656,52 @@ async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
     },
     sessionId?: string
   ): Promise<void> {
-    const { message, subject, level } = request;
-    this.logger.info(
-      {
-        query: message.substring(0, 80),
-        subject: subject,
-        level: level,
-        sessionId,
-      },
-      '[TutorChain] Chat stream started'
-    );
+    const traceableChatStream = traceable(async (req: ChatRequest, sessId?: string) => {
+        const { message, subject, level } = req;
+        this.logger.info(
+          {
+            query: message.substring(0, 80),
+            subject: subject,
+            level: level,
+            sessionId: sessId,
+          },
+          '[TutorChain] Chat stream started'
+        );
 
-    try {
-      // Manually run the initial parts of the chain
-      let standaloneQuery = message;
-      if (sessionId) {
-        const messages = await this.chatMemory.load(sessionId, 5);
-        const userQueriesOnly = this.chatMemory.formatUserQueriesOnly(messages);
-        if (userQueriesOnly && userQueriesOnly.trim().length > 20) {
-          try {
-            standaloneQuery = await this.classifier['rewriteToStandalone'](
-              message,
-              userQueriesOnly
-            );
-            this.logger.info({
-              original: message.substring(0, 60),
-              standalone: standaloneQuery.substring(0, 60)
-            }, '[TutorChain] Query rewritten to standalone');
-          } catch (error) {
-            this.logger.warn({ error }, '[TutorChain] Standalone rewrite failed, using original');
+        try {
+          // Use the chain for classification and retrieval
+          const classifyAndRetrieveResult = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId: sessId });
+          const { classification, retrievedDocs, standaloneQuery } = classifyAndRetrieveResult;
+
+          // Rerank documents
+          const rerankedResults = await this.reranker.rerank(retrievedDocs, standaloneQuery, 3);
+          
+          if (callbacks.onMetadata) {
+            callbacks.onMetadata({
+                classification: classification,
+                sources: rerankedResults,
+            });
           }
+          
+          const rerankedDocs = rerankedResults.map(result => result.document);
+
+          // Evaluate and stream the final answer
+          await this.evaluateStreaming(
+            message, // pass original message to evaluate
+            classification,
+            rerankedDocs,
+            req.userSubscription || 'free',
+            callbacks,
+            sessId
+          );
+
+        } catch (error) {
+          this.logger.error({ error }, '[TutorChain] Chat stream failed');
+          callbacks.onError(error as Error);
         }
-      }
-
-      const isCurrentAffairs = subject === 'current_affairs' || subject === 'general_knowledge';
-      const classifyPromise = this.classifier.classify(standaloneQuery);
-      
-      let retrievePromise;
-      if (isCurrentAffairs) {
-        retrievePromise = webSearchTool(standaloneQuery, subject || 'general_knowledge', this.secrets.tavilyApiKey, this.logger);
-      } else {
-        retrievePromise = this.retriever.getRelevantDocuments(standaloneQuery, { subject, level, k: 5 });
-      }
-
-      const [classification, retrievedDocs] = await Promise.all([classifyPromise, retrievePromise]);
-      
-      let finalDocs = retrievedDocs;
-      if (!isCurrentAffairs && (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5)) {
-        this.logger.warn('[TutorChain] Fallback to web search');
-        finalDocs = await webSearchTool(standaloneQuery, classification.subject, this.secrets.tavilyApiKey, this.logger);
-      }
-      
-      const rerankedResults = await this.reranker.rerank(finalDocs, standaloneQuery, 3);
-      
-      if (callbacks.onMetadata) {
-        callbacks.onMetadata({
-            classification: classification,
-            sources: rerankedResults,
-        });
-      }
-      
-      const rerankedDocs = rerankedResults.map(result => result.document);
-
-      // Now, call evaluateStreaming with the results
-      await this.evaluateStreaming(
-        message, // pass original message to evaluate
-        classification,
-        rerankedDocs,
-        request.userSubscription || 'free',
-        callbacks,
-        sessionId
-      );
-
-    } catch (error) {
-      this.logger.error({ error }, '[TutorChain] Chat stream failed');
-      callbacks.onError(error as Error);
-    }
+    }, { name: 'TutorStreamingChain' });
+    
+    await traceableChatStream(request, sessionId);
   }
 
   /**

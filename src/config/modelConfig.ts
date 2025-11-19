@@ -26,6 +26,7 @@ export const tutorConfigData: TutorConfig = {
     "gpt-3.5-turbo": { "bedrockId": "gpt-3.5-turbo", "invokeId": "gpt-3.5-turbo", "inferenceProfileArn": null, "region": "ap-south-1" },
     "amazon.nova-micro-v1:0": { "bedrockId": "amazon.nova-micro-v1:0", "invokeId": "amazon.nova-micro-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.amazon.nova-micro-v1:0", "region": "ap-south-1" },
     "amazon.rerank-v1:0": { "bedrockId": "cohere.rerank-v3-5:0", "invokeId": "cohere.rerank-v3-5:0", "inferenceProfileArn": "arn:aws:bedrock:region::foundation-model/amazon.rerank-v1:0", "region": "ap-south-1" },
+    "anthropic.claude-3-haiku-20240307-v1:0": { "bedrockId": "anthropic.claude-3-haiku-20240307-v1:0", "invokeId": "anthropic.claude-3-haiku-20240307-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-haiku-20240307-v1:0", "region": "ap-south-1" },
     "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-sonnet-20240229-v1:0", "region": "ap-south-1" },
     "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0", "region": "ap-south-1" },
     "anthropic.claude-sonnet-4-20250514-v1:0": { "bedrockId": "anthropic.claude-sonnet-4-20250514-v1:0", "invokeId": "anthropic.claude-sonnet-4-20250514-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-sonnet-4-20250514-v1:0", "region": "ap-south-1" }
@@ -47,7 +48,7 @@ export const tutorConfigData: TutorConfig = {
   "subjects": {
     "general": {
       "basic": {
-        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
         "maxTokens": 800,
         "temperature": 0.2,
         "systemPrompt": "You are a helpful tutor. Keep answers concise, accurate, and provide sources when available.",
@@ -70,7 +71,7 @@ export const tutorConfigData: TutorConfig = {
     },
     "math": {
       "basic": {
-        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
         "maxTokens": 1000,
         "temperature": 0.2,
         "systemPrompt": "You are a math tutor. Provide step-by-step solutions and final answer. Use tools for computation if needed.",
@@ -93,7 +94,7 @@ export const tutorConfigData: TutorConfig = {
     },
     "reasoning": {
       "basic": {
-        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
         "maxTokens": 900,
         "temperature": 0.2,
         "systemPrompt": "You are a reasoning assistant. Break down problems into small steps and validate each step.",
@@ -116,7 +117,7 @@ export const tutorConfigData: TutorConfig = {
     },
     "english_grammar": {
       "basic": {
-        "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
         "maxTokens": 600,
         "temperature": 0.2,
         "systemPrompt": "You are an English grammar tutor. Provide corrections, brief rules, and examples.",
@@ -138,12 +139,12 @@ export const tutorConfigData: TutorConfig = {
       }
     },
     "science": {
-      "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a science tutor. Keep explanations simple and factual.", "outputFormat": "Answer + simple explanation" },
+      "basic": { "modelId": "anthropic.claude-3-haiku-20240307-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a science tutor. Keep explanations simple and factual.", "outputFormat": "Answer + simple explanation" },
       "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a science assistant. Provide sourced explanations and reasoning.", "outputFormat": "Answer + citations" },
       "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert scientist. Provide thorough explanations, citations, and confidence.", "outputFormat": "Detailed answer + citations" }
     },
     "history": {
-      "basic": { "modelId": "anthropic.claude-3-sonnet-20240229-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a history tutor. Provide concise historical facts and timelines.", "outputFormat": "Facts + timeline" },
+      "basic": { "modelId": "anthropic.claude-3-haiku-20240307-v1:0", "maxTokens": 800, "temperature": 0.2, "systemPrompt": "You are a history tutor. Provide concise historical facts and timelines.", "outputFormat": "Facts + timeline" },
       "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
       "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
     }

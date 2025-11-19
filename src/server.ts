@@ -145,7 +145,7 @@ export async function createServer(): Promise<FastifyInstance> {
       );
 
       const tutorChain = container.getTutorChain();
-      const result = await tutorChain.classifyAndRetrieve(request.body, sessionId);
+      const result = await tutorChain.run(request.body, sessionId);
 
       const duration = Date.now() - startTime;
 
