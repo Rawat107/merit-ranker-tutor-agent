@@ -1129,7 +1129,6 @@
       }
 
       // Quick Answer - All steps in one go with streaming
-      // Quick Answer - All steps in one go with streaming
       async function quickAnswer() {
         const query = document.getElementById("queryInput").value.trim();
         if (!query) {
@@ -1139,149 +1138,28 @@
 
         const startTime = Date.now();
         showStatus("Analyzing question...");
-        updateStep(2);
+        updateStep(4); // Go directly to the final step view
 
-        // Hide all boxes except answer box
+        // Hide all intermediate boxes
         document.getElementById("classificationBox").classList.remove("show");
         document.getElementById("documentsBox").classList.remove("show");
         document.getElementById("rerankedBox").classList.remove("show");
+        
+        // Show the answer box and clear previous content
+        document.getElementById("answerBox").classList.add("show");
+        const answerContent = document.getElementById("answerContent");
+        answerContent.textContent = "";
 
         try {
-          // STEP 1: Classify & Retrieve
-          const classifyResponse = await fetch("http://localhost:3000/chat", {
+          const response = await fetch("http://localhost:3000/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: query, sessionId }),
           });
 
-          if (!classifyResponse.ok)
-            throw new Error(
-              `Classification failed (HTTP ${classifyResponse.status})`
-            );
-
-          const classifyData = await classifyResponse.json();
-          currentClassification = classifyData.classification;
-          currentDocuments = classifyData.sources || []; // Defensive: default to empty array
-
-          // ✅ CHECK IF CACHED - Skip reranking if cached!
-          if (classifyData.cached) {
-            console.log("✓ Cache hit - skipping rerank and evaluation");
-            hideStatus();
-
-            // Display cached answer directly
-            document.getElementById("answerBox").classList.add("show");
-            document.getElementById("answerIntent").textContent =
-              currentClassification.subject || "cached";
-            document.getElementById("answerContent").textContent =
-              classifyData.answer;
-            document.getElementById("modelUsed").textContent = "cached";
-            document.getElementById("modelLevel").textContent =
-              currentClassification.level || "N/A";
-
-            const totalLatency = Date.now() - startTime;
-            document.getElementById("latency").textContent =
-              `${totalLatency}ms`;
-
-            showSuccess(`✓ Instant answer from cache! (${totalLatency}ms)`);
-            updateStep(4);
-            return; // ✅ EXIT HERE - Don't continue to rerank/evaluate
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`);
           }
-
-          // ✅ Only proceed if NOT cached and have documents
-          if (!currentDocuments || currentDocuments.length === 0) {
-            throw new Error("No documents retrieved and not cached");
-          }
-
-          const level = currentClassification.level;
-          const subject = currentClassification.subject;
-
-          // Show tier-based thinking message
-          let thinkingMessage = "Thinking...";
-          if (level === "intermediate") thinkingMessage = "Thinking harder...";
-          else if (level === "advanced") thinkingMessage = "Thinking deeply...";
-          showStatus(thinkingMessage);
-
-          // STEP 2: Rerank (ONLY if not cached)
-          updateStep(3);
-          const rerankResponse = await fetch("http://localhost:3000/rerank", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query: query,
-              documents: currentDocuments,
-              topK: 3,
-              sessionId,
-            }),
-          });
-
-          if (!rerankResponse.ok)
-            throw new Error(`Reranking failed (HTTP ${rerankResponse.status})`);
-
-          const rerankData = await rerankResponse.json();
-          rerankedDocuments = rerankData.results;
-
-          // Show subject-specific action message
-          let actionMessage = "Preparing response...";
-          switch (subject) {
-            case "math":
-              actionMessage = "Solving the problem...";
-              break;
-            case "reasoning":
-              actionMessage = "Working through the logic...";
-              break;
-            case "science":
-              actionMessage = "Analyzing the concepts...";
-              break;
-            case "history":
-              actionMessage = "Researching historical context...";
-              break;
-            case "english_grammar":
-              actionMessage = "Checking grammar rules...";
-              break;
-            default:
-              actionMessage = "Preparing response...";
-          }
-          showStatus(actionMessage);
-
-          // STEP 3: Evaluate with Streaming
-          updateStep(4);
-          const topDoc = rerankedDocuments[0];
-          const docsForEval = [
-            {
-              id: topDoc.id,
-              text: topDoc.text,
-              metadata: topDoc.metadata || {},
-              score: topDoc.reranked_score,
-            },
-          ];
-
-          // Show answer box
-          document.getElementById("answerBox").classList.add("show");
-          const intent = currentClassification.intent || "factual_retrieval";
-          document.getElementById("answerIntent").textContent = intent;
-
-          // Clear previous content
-          const answerContent = document.getElementById("answerContent");
-          answerContent.textContent = "";
-
-          // Stream the response
-          const response = await fetch(
-            "http://localhost:3000/evaluate/stream",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userQuery: query,
-                classification: currentClassification,
-                documents: docsForEval,
-                userSubscription: "free",
-                sessionId,
-              }),
-            }
-          );
-
-          if (!response.ok)
-            throw new Error(`Streaming failed (HTTP ${response.status})`);
 
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -1294,7 +1172,7 @@
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n\n");
-            buffer = lines.pop();
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
               if (line.startsWith("data: ")) {
@@ -1309,8 +1187,10 @@
                     answerContent.textContent += data.content;
                     answerContent.scrollTop = answerContent.scrollHeight;
                   } else if (data.type === "metadata") {
-                    if (data.content && data.content.status) {
-                      showStatus(data.content.status);
+                    // We can update the UI with classification and sources if we want
+                    if (data.content.classification) {
+                        currentClassification = data.content.classification;
+                        document.getElementById("answerIntent").textContent = currentClassification.intent || "factual_retrieval";
                     }
                   } else if (data.type === "complete") {
                     hideStatus();
@@ -1320,8 +1200,7 @@
                         data.content.data.modelUsed;
                       document.getElementById("modelLevel").textContent =
                         data.content.data.levelUsed;
-                      document.getElementById("latency").textContent =
-                        `${totalLatency}ms`;
+                      document.getElementById("latency").textContent = `${totalLatency}ms`;
                       showSuccess(`Answer complete! (${totalLatency}ms)`);
                     } else {
                       showError(data.content.message || "Quick answer failed");
@@ -1331,7 +1210,7 @@
                     showError("Error: " + data.content.message);
                   }
                 } catch (e) {
-                  console.warn("Failed to parse SSE data:", line);
+                  console.warn("Failed to parse SSE data:", line, e);
                 }
               }
             }
