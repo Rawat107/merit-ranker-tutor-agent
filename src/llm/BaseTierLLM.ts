@@ -81,26 +81,25 @@ export abstract class BaseTierLLM implements ILLM {
   ): Promise<void> {
     try {
       this.logger.debug({ promptLength: prompt.length }, `[${this.tierName}] Starting stream`);
-
       const stream = await this.llm.stream([
         {
           role: 'user',
           content: prompt,
         },
       ]);
-
+      
       for await (const chunk of stream) {
         const content = extractStreamChunkContent(chunk.content);
-
         if (content && callbacks.onToken) {
           callbacks.onToken(content);
         }
       }
-
+      
+      // ✅ CORRECT - Call onComplete AFTER the loop finishes
       if (callbacks.onComplete) {
         callbacks.onComplete();
       }
-
+      
       this.logger.info({ model: this.registryEntry.bedrockId }, `[${this.tierName}] Stream completed`);
     } catch (error) {
       this.logger.error({ error }, `[${this.tierName}] Stream failed`);

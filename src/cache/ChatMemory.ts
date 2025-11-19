@@ -138,6 +138,16 @@ export class ChatMemory {
     };
   }
 
+formatUserQueriesOnly(messages: any[]): string {
+  if (!messages || messages.length === 0) {
+    return '';
+  }
+  
+  return messages
+    .filter((msg: any) => msg.role === 'user')
+    .map((msg: any, index: number) => `${index + 1}. ${msg.content}`)
+    .join('\n');
+}
   /**
    * Clear conversation history for a user
    * @param userId - Unique user/session identifier

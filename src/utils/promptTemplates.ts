@@ -179,39 +179,45 @@ Provide your response in the format specified above, using the conversation hist
   // Return as plain text prompt
   return `${systemMessage}\n\n${humanMessage}`;
 }
+
 export function buildStandaloneRewritePrompt(): string {
-  return `You are an expert at converting context-dependent queries into standalone, self-contained questions.
+  return `You are an expert at converting context-dependent queries into standalone, self-contained questions for an AI tutor.
 
-Your task is to rewrite a query to be completely understandable WITHOUT any conversation context.
+Your task: Rewrite ONLY the CURRENT QUERY to make it fully understandable without needing conversation history. The rewritten query must be a clear, direct question.
 
-**Rewriting Rules:**
+**STRICT RULES (Follow exactly):**
+1. Focus SOLELY on the "Current Query" line. Analyze it independently first.
+2. Use "Conversation History" ONLY to resolve pronouns or vague references (e.g., "it" → specific noun from history; "their" → entity mentioned). If no pronouns/references in Current Query, IGNORE history completely and return Current Query as-is (after minor cleanup).
+3. Remove casual greetings (e.g., "Hi [name],", "Hello,") to make it a pure question, but keep the core intent.
+4. Do NOT summarize, repeat, or add from history unless resolving a direct reference. Do NOT change the meaning or add unrelated details.
+5. Correct obvious typos/spelling only if they obscure meaning (e.g., "know value" → "tell me the value"), but keep original phrasing otherwise.
+6. Output ONLY the rewritten query as plain text. NO explanations, quotes, JSON, labels (e.g., no "Rewritten: "), or extra sentences. If already standalone, return exactly (cleaned).
 
-1. Preserve the exact intent and complexity of the original question
-2. Include necessary context from the conversation history
-3. Make it grammatically complete and clear
-4. Keep it concise and focused
-5. If the query is already standalone, return it unchanged
+**Input Format:**
+Current Query: [the user's latest message]
+Conversation History: [previous messages - use only for reference resolution]
 
-**Important:**
-- Output ONLY the rewritten query, nothing else
-- Do NOT include explanations, quotation marks, or preambles
-- The output should be a single query/question
+**Examples:**
 
-**Example 1:**
-Original: "What about their economy?"
-History: "User asked about Japan"
-Rewritten: "What about Japan's economy?"
+Example 1:
+Current Query: "What about their economy?"
+Conversation History: Previous: Tell me about Japan. Assistant: Japan's capital is Tokyo...
+Output: What is Japan's economy like?
 
-**Example 2:**
-Original: "Can you explain it more?"
-History: "Previous topic was photosynthesis"
-Rewritten: "Can you explain photosynthesis in more detail?"
+Example 2:
+Current Query: "Can you explain photosynthesis?"
+Conversation History: [any]
+Output: Can you explain photosynthesis?
 
-**Example 3:**
-Original: "Is mitochondria the powerhouse of the cell?"
-History: (any or none)
-Rewritten: "Is mitochondria the powerhouse of the cell?" (already standalone)`;
+Example 3:
+Current Query: "Hi Vaibhav, can you know value of 234 pi"
+Conversation History: [unrelated or none]
+Output: What is the value of 234 π?
+
+**Final Note:** If Current Query has no references to history, output a cleaned version of it directly. Always produce a valid, standalone question.`;
 }
+
+
 /**
  * Get response format based on user intent
  */

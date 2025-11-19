@@ -145,7 +145,7 @@ export async function createServer(): Promise<FastifyInstance> {
       );
 
       const tutorChain = container.getTutorChain();
-      const result = await tutorChain.run(request.body, sessionId);
+      const result = await tutorChain.classifyAndRetrieve(request.body, sessionId);
 
       const duration = Date.now() - startTime;
 
@@ -183,6 +183,145 @@ export async function createServer(): Promise<FastifyInstance> {
         error: 'Internal server error',
         message: error instanceof Error ? error.message : 'unknown error',
       };
+    }
+  });
+
+  server.post<{ Body: ChatRequest }>('/chat/stream', {
+    onRequest: server.auth.require(),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['message'],
+        properties: {
+          message: { type: 'string' },
+          subject: { type: 'string' },
+          level: { type: 'string' },
+          userSubscription: { type: 'string' },
+          sessionId: { type: 'string' },
+          language: { type: 'string' },
+          examPrep: { type: 'boolean' },
+        },
+      },
+    }
+  }, async (request, reply) => {
+    const startTime = Date.now();
+    const { sessionId } = request.body;
+
+    try {
+      server.log.info(
+        {
+          endpoint: '/chat/stream',
+          sessionId,
+          messagePreview: request.body.message.substring(0, 100),
+        },
+        'Streaming chat request received'
+      );
+
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'Transfer-Encoding': 'chunked',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Cache-Control, Content-Type',
+      });
+
+      const tutorChain = container.getTutorChain();
+      let tokenCount = 0;
+
+      await tutorChain.chatStream(
+        request.body,
+        {
+          onToken: (token: string) => {
+            tokenCount++;
+            reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
+          },
+          onMetadata: (metadata: any) => {
+            server.log.debug({ 
+              endpoint: '/chat/stream',
+              sessionId,
+              metadata 
+            }, 'Metadata sent to client');
+            reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
+          },
+          onComplete: (result) => {
+            const duration = Date.now() - startTime;
+            
+            reply.raw.write(`data: ${JSON.stringify({ 
+              type: 'complete', 
+              content: {
+                success: true,
+                data: {
+                  answer: result.answer,
+                  modelUsed: result.modelUsed,
+                  levelUsed: result.levelUsed,
+                  latency: result.latency,
+                  sessionId,
+                },
+              }
+            })}\n\n`);
+
+            server.log.info(
+              {
+                endpoint: '/chat/stream',
+                sessionId,
+                modelUsed: result.modelUsed,
+                levelUsed: result.levelUsed,
+                streamLatency: result.latency,
+                totalDuration: duration,
+                answerLength: result.answer.length,
+                tokensStreamed: tokenCount,
+              },
+              'Streaming chat completed'
+            );
+
+            reply.raw.end();
+          },
+          onError: (error) => {
+            const duration = Date.now() - startTime;
+            
+            server.log.error({ 
+              endpoint: '/chat/stream',
+              sessionId,
+              error: error.message,
+              stack: error.stack,
+              duration,
+            }, 'Streaming chat failed');
+            
+            reply.raw.write(`data: ${JSON.stringify({ 
+              type: 'error', 
+              content: {
+                success: false,
+                error: 'Streaming chat failed',
+                message: error.message,
+              }
+            })}\n\n`);
+            
+            reply.raw.end();
+          },
+        },
+        sessionId
+      );
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      server.log.error({ 
+        endpoint: '/chat/stream',
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration,
+      }, 'Streaming chat setup failed');
+      
+      if (!reply.sent) {
+        reply.status(500);
+        return {
+          success: false,
+          error: 'Streaming chat setup failed',
+          message: error instanceof Error ? error.message : 'unknown error',
+        };
+      }
     }
   });
 
@@ -260,10 +399,12 @@ export async function createServer(): Promise<FastifyInstance> {
 
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
+        'Transfer-Encoding': 'chunked',
+        'X-Accel-Buffering': 'no',         
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control',
+        'Access-Control-Allow-Headers': 'Cache-Control, Content-Type',
       });
 
       const tutorChain = container.getTutorChain();

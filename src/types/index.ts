@@ -25,6 +25,7 @@ export interface AITutorResponse {
     message?: string;
     [key: string]: any;
   };
+  suggestedNext?: string;
 }
 
 export interface StreamingCallbacks {

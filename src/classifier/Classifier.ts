@@ -72,8 +72,10 @@ export class Classifier {
     // Initialize standalone rewrite prompt template
     this.rewritePromptTemplate = ChatPromptTemplate.fromMessages([
       ['system', buildStandaloneRewritePrompt()],
-      ['human', '{query}\n\nHistory:\n{history}']
+      ['human', 'Current Query: {query}\n\nConversation History (User queries only):\n{history}']
     ]);
+
+
 
     // Initialize Langchain ChatBedrockConverse if no external LLM provided
     if (!useExternalLLM) {
