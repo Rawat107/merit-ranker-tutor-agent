@@ -12,6 +12,10 @@ import { RedisCache } from './cache/RedisCache.js';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Agent } from 'https';
 import { ModelSelector } from './llm/ModelSelector.js';
+import { PresentationOutlineChain } from './presentation/outlineChain.js';
+import { PresentationContentChain } from './presentation/contentChain.js';
+import { SlideOutlineRequest } from './types/index.js';
+
 
 export async function createServer(): Promise<FastifyInstance> {
 
@@ -126,11 +130,29 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   await redisCache.connect(); // Connect once at startup
 
   const modelSelector = new ModelSelector(logger);
-  // Pre-initialize classifier LLM
-  await modelSelector.getClassifierLLM();
+  // Pre-initialize classifier LLM (and log the exact model we'll use for small tasks)
+  const classifierLLM = await modelSelector.getClassifierLLM();
+  try {
+    server.log.info({ classifierModel: classifierLLM.getModelInfo().modelId }, 'Classifier LLM pre-initialized');
+  } catch (_) {
+    server.log.info('Classifier LLM pre-initialized');
+  }
 
   server.decorate('redisCache', redisCache);
   server.decorate('modelSelector', modelSelector);
+
+  // Initialize Presentation Chains with corrected Redis methods
+  const presentationOutlineChain = new PresentationOutlineChain(
+    redisCache,
+    logger,
+    secrets.tavilyApiKey
+  );
+
+  const presentationContentChain = new PresentationContentChain(logger);
+
+  server.decorate('presentationOutlineChain', presentationOutlineChain);
+  server.decorate('presentationContentChain', presentationContentChain);
+
 
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
@@ -674,6 +696,194 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   //     };
   //   }
   // });
+
+  server.post<{ Body: SlideOutlineRequest }>(
+    '/presentations/outline',
+    {
+      onRequest: server.auth.require(),
+    },
+    async (request, reply) => {
+      const startTime = Date.now();
+      try {
+        const userId = (request as any).user?.sub || 'unknown-user';
+
+        const result = await presentationOutlineChain.generateOutline({
+          ...request.body,
+          userId,
+        });
+
+        const duration = Date.now() - startTime;
+        server.log.info(
+          { slideId: result.slideId, duration },
+          'Outline generated'
+        );
+
+        return { success: true, data: result };
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        server.log.error({ error, duration }, 'Outline generation failed');
+        reply.status(500);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  server.get<{ Params: { slideId: string } }>(
+    '/presentations/:slideId/outline',
+    {
+      onRequest: server.auth.require(),
+    },
+    async (request, reply) => {
+      try {
+        const result = await presentationOutlineChain.getOutline(
+          request.params.slideId
+        );
+        return { success: true, data: result };
+      } catch (error) {
+        server.log.warn(
+          { slideId: request.params.slideId },
+          'Outline not found'
+        );
+        reply.status(404);
+        return { success: false, error: 'Outline not found' };
+      }
+    }
+  );
+
+  server.put<{
+    Params: { slideId: string };
+    Body: { updates: any[] };
+  }>(
+    '/presentations/:slideId/outline',
+    {
+      onRequest: server.auth.require(),
+    },
+    async (request, reply) => {
+      try {
+        const result = await presentationOutlineChain.updateOutline(
+          request.params.slideId,
+          request.body.updates
+        );
+
+        server.log.info(
+          { slideId: request.params.slideId },
+          'Outline updated'
+        );
+        return { success: true, data: result };
+      } catch (error) {
+        server.log.error(
+          { slideId: request.params.slideId, error },
+          'Outline update failed'
+        );
+        reply.status(500);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  server.post<{ Params: { slideId: string } }>(
+    '/presentations/:slideId/generate',
+    {
+      onRequest: server.auth.require(),
+    },
+    async (request, reply) => {
+      const startTime = Date.now();
+      try {
+        // Get outline from Redis using checkDirectCache
+        const outlineData = await presentationOutlineChain.getOutline(
+          request.params.slideId
+        );
+
+        server.log.info(
+          { slideId: request.params.slideId },
+          'Generating presentation content'
+        );
+
+        // Generate content for all slides (fetches images from Unsplash)
+        const slidesContent = await presentationContentChain.generateSlideContent(
+          outlineData.outline,
+          outlineData.webSearchResults || ''
+        );
+
+        const response = {
+          slideId: request.params.slideId,
+          userId: outlineData.userId,
+          title: outlineData.title,
+          status: 'READY' as const,
+          slidesContent,
+          totalSlides: outlineData.noOfSlides,
+          createdAt: outlineData.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
+
+        // Store final presentation in Redis using storeDirectCache
+        const cacheKey = `presentation:final:${request.params.slideId}`;
+        await redisCache.storeDirectCache(
+          cacheKey,
+          JSON.stringify(response),
+          'presentation',
+          { slideId: request.params.slideId, userId: outlineData.userId }
+        );
+
+        const duration = Date.now() - startTime;
+        server.log.info(
+          { slideId: request.params.slideId, duration },
+          'Presentation generated'
+        );
+
+        return { success: true, data: response };
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        server.log.error(
+          { slideId: request.params.slideId, error, duration },
+          'Presentation generation failed'
+        );
+        reply.status(500);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );  
+
+  server.get<{ Params: { slideId: string } }>(
+    '/presentations/:slideId',
+    {
+      onRequest: server.auth.require(),
+    },
+    async (request, reply) => {
+      try {
+        const cacheKey = `presentation:final:${request.params.slideId}`;
+        const cached = await redisCache.checkDirectCache(
+          cacheKey,
+          'presentation'
+        );
+
+        if (!cached) {
+          reply.status(404);
+          return { success: false, error: 'Presentation not found' };
+        }
+
+        return { success: true, data: JSON.parse(cached.response) };
+      } catch (error) {
+        server.log.warn(
+          { slideId: request.params.slideId },
+          'Presentation not found'
+        );
+        reply.status(404);
+        return { success: false, error: 'Presentation not found' };
+      }
+    }
+  );
+
+
 
   server.post<{ Body: { query: string } }>('/classify', {
     onRequest: server.auth.require(),

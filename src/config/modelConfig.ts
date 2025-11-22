@@ -29,7 +29,9 @@ export const tutorConfigData: TutorConfig = {
     "anthropic.claude-3-haiku-20240307-v1:0": { "bedrockId": "anthropic.claude-3-haiku-20240307-v1:0", "invokeId": "anthropic.claude-3-haiku-20240307-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-haiku-20240307-v1:0", "region": "ap-south-1" },
     "anthropic.claude-3-sonnet-20240229-v1:0": { "bedrockId": "anthropic.claude-3-sonnet-20240229-v1:0", "invokeId": "anthropic.claude-3-sonnet-20240229-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-sonnet-20240229-v1:0", "region": "ap-south-1" },
     "anthropic.claude-3-5-sonnet-20241022-v2:0": { "bedrockId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "invokeId": "anthropic.claude-3-5-sonnet-20241022-v2:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0", "region": "ap-south-1" },
-    "anthropic.claude-sonnet-4-20250514-v1:0": { "bedrockId": "anthropic.claude-sonnet-4-20250514-v1:0", "invokeId": "anthropic.claude-sonnet-4-20250514-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-sonnet-4-20250514-v1:0", "region": "ap-south-1" }
+    "anthropic.claude-sonnet-4-20250514-v1:0": { "bedrockId": "anthropic.claude-sonnet-4-20250514-v1:0", "invokeId": "anthropic.claude-sonnet-4-20250514-v1:0", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:558069890997:inference-profile/apac.anthropic.claude-sonnet-4-20250514-v1:0", "region": "ap-south-1" },
+    "amazon.titan-image-generator-v1": { "bedrockId": "amazon.titan-image-generator-v1", "invokeId": "amazon.titan-image-generator-v1", "inferenceProfileArn": "arn:aws:bedrock:ap-south-1:<your_account>:inference-profile/apac.amazon.titan-image-generator-v1", "region": "ap-south-1" },
+
   },
   "classifier": {
     "modelId": "amazon.nova-micro-v1:0",
@@ -44,6 +46,14 @@ export const tutorConfigData: TutorConfig = {
     "maxTokens": 200,
     "temperature": 0.0,
     "outputFormat": "json"
+  },
+  "imageGenerator": {
+  "modelId": "amazon.titan-image-generator-v1",
+  "systemPrompt": "You are an image generator. Generate high-quality images based on detailed prompts.",
+  "maxTokens": 256,
+  "temperature": 0.8,
+  "outputFormat": "base64_image",
+  "region": "ap-south-1"
   },
   "subjects": {
     "general": {
@@ -492,6 +502,15 @@ export class ModelConfigService {
   getClassificationConfig() {
     return classificationConfig;
   }
+
+  getImageGeneratorConfig(): ModelConfig & { modelId: string; region: string } {
+    // Ensure region is always a string
+    const imageGen = this.tutorConfig.imageGenerator;
+    return {
+      ...imageGen,
+      region: imageGen.region ?? 'ap-south-1'
+    };
+}
 }
 
 export const modelConfigService = new ModelConfigService();

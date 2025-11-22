@@ -323,7 +323,9 @@ export class TutorChain {
 
         // Get the classifier's own LLM (the small, fast model).
         const llm = await this.modelSelector.getClassifierLLM();
-        this.logger.info({ modelUsed: (llm as any).modelId }, '[TutorChain] Classifier LLM selected for fast path execution.');
+        // Prefer the stable getModelInfo method instead of relying on a dynamic property
+        const classifierModelId = llm.getModelInfo ? llm.getModelInfo().modelId : (llm as any).modelId;
+        this.logger.info({ modelUsed: classifierModelId }, '[TutorChain] Classifier LLM selected for fast path execution.');
         
         // Simple prompt for the task.
         const fastPathPrompt = `You are a helpful assistant. Please ${classification.intent.replace(/_/g, ' ')} the following text:\n\n${standaloneQuery}`;
@@ -341,7 +343,7 @@ export class TutorChain {
           confidence: classification.confidence,
           sources: [], // No sources for this path
           metadata: {
-            modelUsed: (llm as any).modelId || 'classifier-model',
+            modelUsed: classifierModelId || 'classifier-model',
             validationScore: 1,
             fastPath: true
           },
