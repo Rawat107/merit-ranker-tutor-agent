@@ -8,8 +8,25 @@ import { ChatRequest, Classification, Document } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
 import { loadAllSecrets } from './lib/secrets.js';
 import pino from 'pino';
+import { RedisCache } from './cache/RedisCache.js';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { Agent } from 'https';
+import { ModelSelector } from './llm/ModelSelector.js';
 
 export async function createServer(): Promise<FastifyInstance> {
+
+    const httpsAgent = new Agent({
+    keepAlive: true,
+    maxSockets: 50,
+    maxFreeSockets: 10,
+    timeout: 60000,
+  });
+
+    
+
+// Enable connection reuse globally
+process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
+
   const server = Fastify({
     logger: {
       level: appConfig.logLevel,
@@ -19,6 +36,15 @@ export async function createServer(): Promise<FastifyInstance> {
     keepAliveTimeout: 60_000,
     requestTimeout: 30_000,
   });
+
+  server.decorate('awsConfig', {
+      region: process.env.AWS_REGION || 'ap-south-1',
+      requestHandler: new NodeHttpHandler({
+        httpsAgent: httpsAgent, // ← USE the agent you created
+        requestTimeout: 30000,
+      }),
+      maxAttempts: 3,
+    });
 
   if (appConfig.nodeEnv === 'development') {
   server.addHook('onRequest', (request, reply, done) => {
@@ -95,6 +121,16 @@ export async function createServer(): Promise<FastifyInstance> {
   const container = createContainer(logger);
   await container.initialize(); 
   const classifier = new Classifier(logger);
+  // PRE-WARM CONNECTIONS
+  const redisCache = new RedisCache(logger);
+  await redisCache.connect(); // Connect once at startup
+
+  const modelSelector = new ModelSelector(logger);
+  // Pre-initialize classifier LLM
+  await modelSelector.getClassifierLLM();
+
+  server.decorate('redisCache', redisCache);
+  server.decorate('modelSelector', modelSelector);
 
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
@@ -862,7 +898,6 @@ declare module 'fastify' {
       redisPassword: string;
       awsAccessKeyId: string;
       awsSecretAccessKey: string;
-      apiKeys: string[];
     };
     }
 }

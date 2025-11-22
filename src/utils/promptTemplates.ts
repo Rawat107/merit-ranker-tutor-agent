@@ -37,6 +37,10 @@ User Intent Types:
 - **problem_solving**: Puzzle/challenge questions (Problem? Solve? Figure out?)
 - **reasoning_puzzle**: Logic/reasoning questions (Why? Reason? Logic?)
 - **verification_check**: Check/validate questions (Is this correct? Verify?)
+- **summarize**: Requests to shorten or condense a given text.
+- **change_tone**: Requests to rewrite a text with a different tone (e.g., formal, friendly).
+- **proofread**: Requests to fix grammar, spelling, and punctuation.
+- **make_email_professional**: Requests to rewrite an email to be more professional.
 
 Expected Format Examples:
 - Factual: "Direct answer with bullet points"
@@ -261,7 +265,15 @@ function getResponseFormatByIntent(intent: string): string {
 - **Verdict:** [TRUE/FALSE/CORRECT/INCORRECT]
 - **Explanation:** [Why this verdict]
 - **Correct Answer:** [If wrong, provide correct version]
-- **What Was Right:** [Acknowledge correct parts]`
+- **What Was Right:** [Acknowledge correct parts]`,
+    'summarize': `
+- **Summary:** [Provide a concise summary of the text]`,
+    'change_tone': `
+- **Rewritten Text:** [Provide the text rewritten in the requested tone]`,
+    'proofread': `
+- **Corrected Text:** [Provide the text with grammar, spelling, and punctuation fixed]`,
+    'make_email_professional': `
+- **Professional Email:** [Provide a professionally rewritten version of the email]`
   };
 
   return formats[intent] || formats['factual_retrieval'];

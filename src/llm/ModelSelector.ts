@@ -177,6 +177,29 @@ export class ModelSelector {
     }
   }
 
+  async getFastLLM(classification: Classification, subscription = 'free'): Promise<ILLM> {
+  // For high-confidence basic queries, use nova-micro (cheaper & faster)
+    if (classification.confidence > 0.9 && classification.level === 'basic') {
+      const fastEntry = modelConfigService.getModelRegistryEntry('amazon.nova-micro-v1:0');
+      if (fastEntry) {
+        this.logger.info({ model: 'amazon.nova-micro-v1:0' }, 'Using fast model for basic query');
+        return createTierLLM('basic', fastEntry, this.logger, 0.2, 800);
+      }
+    }
+    
+    // For intermediate with high confidence, use haiku instead of sonnet
+    if (classification.confidence > 0.85 && classification.level === 'intermediate') {
+      const fastEntry = modelConfigService.getModelRegistryEntry('anthropic.claude-3-haiku-20240307-v1:0');
+      if (fastEntry) {
+        this.logger.info({ model: 'anthropic.claude-3-haiku' }, 'Using fast model for intermediate query');
+        return createTierLLM('intermediate', fastEntry, this.logger, 0.3, 1200);
+      }
+    }
+    
+    // Default to regular selection
+    return this.getLLM(classification, subscription);
+}
+  
   /**
    * Cache management
    */

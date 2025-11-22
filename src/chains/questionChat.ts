@@ -72,6 +72,7 @@ export class TutorChain {
 
     const classifyAndRetrieveStep = async (input: any) => {
       try {
+        // Step 1: Rewrite query to be standalone (if history is present)
         let standaloneQuery = input.message;
         if (input.conversationHistory && input.conversationHistory.trim().length > 20) {
           try {
@@ -90,57 +91,79 @@ export class TutorChain {
           this.logger.debug('[TutorChain] No history or too short, using original query');
         }
 
-        const isCurrentAffairs =
-          input.subject === 'current_affairs' || input.subject === 'general_knowledge';
-
-        const classifyPromise = this.classifier.classify(standaloneQuery);
-
-        let retrievePromise;
-        if (isCurrentAffairs) {
-          retrievePromise = webSearchTool(
-            standaloneQuery,  
-            input.subject || 'general_knowledge',
-            this.secrets.tavilyApiKey,
-            this.logger
-          );
-        } else {
-          retrievePromise = this.retriever.getRelevantDocuments(
-            standaloneQuery,  
-            {
-              subject: input.subject,
-              level: input.level,
-              k: 5,
-            }
-          );
-        }
-
-        const [classification, retrievedDocs] = await Promise.all([
-          classifyPromise,
-          retrievePromise,
-        ]);
-
-        let finalDocs = retrievedDocs;
-        if (!isCurrentAffairs && (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5)) {
-          this.logger.warn('[TutorChain] Fallback to web search');
-          finalDocs = await webSearchTool(
-            standaloneQuery,  
-            classification.subject,
-            this.secrets.tavilyApiKey,
-            this.logger
-          );
-        }
-
+        // Step 2: Classify the standalone query to determine intent
+        const classification = await this.classifier.classify(standaloneQuery);
         this.logger.info({
           subject: classification.subject,
           level: classification.level,
+          intent: classification.intent,
           confidence: classification.confidence
         }, '[TutorChain] Classification complete');
+
+        let retrievedDocs: Document[] = [];
+        const smallTextIntents = ['summarize', 'change_tone', 'proofread', 'make_email_professional'];
+        const urlRegex = /https?:\/\/[^\s]+/g;
+        const containsUrl = urlRegex.test(standaloneQuery);
+
+        // Step 3: Decide on retrieval strategy based on intent
+        if (classification.intent && smallTextIntents.includes(classification.intent)) {
+          // This is a small text task. Only use web search if there's a URL.
+          this.logger.info({ intent: classification.intent }, '[TutorChain] Small text intent detected.');
+          if (containsUrl) {
+            this.logger.info('[TutorChain] URL detected in small text task, using web search.');
+            retrievedDocs = await webSearchTool(
+              standaloneQuery,
+              classification.subject,
+              this.secrets.tavilyApiKey,
+              this.logger
+            );
+          } else {
+            this.logger.info('[TutorChain] No URL in small text task, skipping retrieval.');
+            // No retrieval needed, the text to be processed is in the query itself.
+            retrievedDocs = [];
+          }
+        } else {
+          // This is a knowledge-based question, use the standard retrieval logic.
+          this.logger.info('[TutorChain] Knowledge-based intent detected, proceeding with standard retrieval.');
+          const isCurrentAffairs = classification.subject === 'current_affairs' || classification.subject === 'general_knowledge';
+
+          if (isCurrentAffairs) {
+            this.logger.info('[TutorChain] Current affairs/GK subject, using web search.');
+            retrievedDocs = await webSearchTool(
+              standaloneQuery,
+              classification.subject,
+              this.secrets.tavilyApiKey,
+              this.logger
+            );
+          } else {
+            this.logger.info('[TutorChain] Using AWS KB Retriever.');
+            retrievedDocs = await this.retriever.getRelevantDocuments(
+              standaloneQuery,
+              {
+                subject: classification.subject,
+                level: classification.level,
+                k: 5,
+              }
+            );
+
+            // Fallback to web search if KB retrieval is poor
+            if (retrievedDocs.length === 0 || (retrievedDocs[0]?.score ?? 0) < 0.5) {
+              this.logger.warn('[TutorChain] Fallback to web search due to poor KB results.');
+              retrievedDocs = await webSearchTool(
+                standaloneQuery,
+                classification.subject,
+                this.secrets.tavilyApiKey,
+                this.logger
+              );
+            }
+          }
+        }
         
-        this.logger.info({ count: finalDocs.length }, '[TutorChain] Retrieval complete');
+        this.logger.info({ count: retrievedDocs.length }, '[TutorChain] Retrieval complete');
         
-        return { ...input, classification, retrievedDocs: finalDocs, standaloneQuery };
+        return { ...input, classification, retrievedDocs, standaloneQuery };
       } catch (error) {
-        this.logger.error({ error, query: input.message }, '[TutorChain] Parallel classify/retrieve failed');
+        this.logger.error({ error, query: input.message }, '[TutorChain] Classify/retrieve step failed');
         throw error;
       }
     };
@@ -153,109 +176,77 @@ export class TutorChain {
     }) as RunnableSequence<any, any>;
   }
 
+  private _rerankAndSelectModel = traceable(async (input: any) => {
+    const queryForRerank = input.standaloneQuery || input.message;
+    let finalDocs = input.retrievedDocs || [];
+
+    const shouldRerank = finalDocs.length > 0 && (finalDocs[0].score || 0) < 0.85;
+
+    if (shouldRerank) {
+        this.logger.info('[TutorChain] Reranking documents...');
+        finalDocs = await this.reranker.rerank(finalDocs, queryForRerank, 3);
+    } else {
+        this.logger.info('[TutorChain] Skipping rerank - high-quality docs');
+        finalDocs = finalDocs.slice(0, 3);
+    }
+    
+    return { ...input, rerankedDocs: finalDocs };
+  }, { name: "Rerank" });
+
+  private _evaluate = traceable(async (input: any) => {
+    const topDocument = input.rerankedDocs[0]?.document || null;
+      
+    const evaluateInput: EvaluatePromptInput = {
+        userQuery: input.message,
+        classification: input.classification,
+        topDocument,
+        userPrefs: USER_PREFS,
+        subscription: 'free',
+        conversationHistory: input.conversationHistory,
+    };
+
+    const evaluationOutput = await this.evaluatePrompt.evaluate(evaluateInput);
+    return { ...input, evaluationOutput };
+  }, { name: "Evaluate" });
+
+  private _finalize = traceable(async (input: any) => {
+    try {
+        const { evaluationOutput } = input;
+        const validation = validateResponse(evaluationOutput.answer);
+
+        if (validation.isValid && input.sessionId) {
+            await this.chatMemory.save(input.sessionId, input.message, evaluationOutput.answer);
+            this.logger.info({ sessionId: input.sessionId }, '[TutorChain] Saved to memory');
+        }
+
+        const response: AITutorResponse = {
+            answer: evaluationOutput.answer,
+            sources: input.rerankedDocs,
+            classification: input.classification,
+            cached: false,
+            confidence: input.classification.confidence,
+            metadata: {
+                modelUsed: evaluationOutput.modelUsed,
+                validationScore: validation.score,
+            },
+        };
+
+        return response;
+    } catch (error) {
+        this.logger.error({ error }, '[TutorChain] Finalize failed');
+        throw error;
+    }
+  }, { name: "Finalize" });
+
   /**
    * Build the RunnableSequence with all steps
    */
   private buildSequence(): RunnableSequence<any, any> {
     return RunnableSequence.from([
       this.classifyAndRetrieveChain,
-
-
-
-      // STEP 3: Rerank documents (documents-first)
-      async (input: any) => {
-        try {
-          const docs = input.retrievedDocs || []; // defensive
-          if (docs.length === 0) {
-            this.logger.warn('[TutorChain] No documents to rerank');
-            return { ...input, rerankedDocs: [] };
-          }
-
-          const queryForRerank = input.standaloneQuery || input.message;
-
-          this.logger.info({ docCount: docs.length }, '[TutorChain] Reranking documents');
-
-          // documents, query, topK
-          const reranked = await this.reranker.rerank(
-            docs,
-            queryForRerank,
-            3
-          );
-
-          this.logger.info(
-            { originalCount: docs.length, rerankedCount: reranked.length },
-            '[TutorChain] Reranking complete'
-          );
-
-          return { ...input, rerankedDocs: reranked };
-        } catch (error) {
-          this.logger.error({ error }, '[TutorChain] Reranking failed, using original order');
-          return { ...input, rerankedDocs: input.retrievedDocs || [] };
-        }
-      },
-
-
-      // STEP 4: Evaluate and generate response
-      async (input: any) => {
-        try {
-          const topDocument = input.rerankedDocs.length > 0 ? input.rerankedDocs[0] : null;
-
-          const evaluateInput: EvaluatePromptInput = {
-            userQuery: input.message,
-            classification: input.classification,
-            topDocument,
-            userPrefs: USER_PREFS,
-            subscription: 'free',
-            conversationHistory: input.conversationHistory,
-          };
-
-          this.logger.info('[TutorChain] Starting evaluation');
-
-          const output = await this.evaluatePrompt.evaluate(evaluateInput);
-
-          this.logger.info(
-            { modelUsed: output.modelUsed, answerLength: output.answer.length },
-            '[TutorChain] Evaluation complete'
-          );
-
-          return {
-            ...input,
-            evaluationOutput: output,
-          };
-        } catch (error) {
-          this.logger.error({ error }, '[TutorChain] Evaluation failed');
-          throw error;
-        }
-      },
-
-      // STEP 5: Save to memory and validate
-      async (input: any) => {
-        try {
-          const validation = validateResponse(input.evaluationOutput.answer);
-
-          if (validation.isValid && input.sessionId) {
-            await this.chatMemory.save(input.sessionId, input.message, input.evaluationOutput.answer);
-            this.logger.info({ sessionId: input.sessionId }, '[TutorChain] Saved to memory');
-          }
-
-          const response: AITutorResponse = {
-            answer: input.evaluationOutput.answer,
-            sources: input.rerankedDocs,
-            classification: input.classification,
-            cached: false,
-            confidence: input.classification.confidence,
-            metadata: {
-              modelUsed: input.evaluationOutput.modelUsed,
-              validationScore: validation.score,
-            },
-          };
-
-          return response;
-        } catch (error) {
-          this.logger.error({ error }, '[TutorChain] Finalize failed');
-          throw error;
-        }
-      },
+      this._rerankAndSelectModel,
+      this._evaluate,
+      this._finalize,
     ]).withConfig({
       runName: 'TutorChain',
       metadata: {
@@ -270,44 +261,6 @@ export class TutorChain {
   ): Promise<{ classification: Classification, sources: Document[], cached: boolean, answer?: string }> {
     const { message, subject, level } = request;
 
-    // First, check cache like in run() method
-    const directCache = await this.redisCache.checkDirectCache(
-      message,
-      subject || 'general'
-    );
-    if (directCache) {
-      this.logger.info('✓ DIRECT CACHE HIT in classifyAndRetrieve');
-      const classification = {
-          subject: directCache.metadata.subject || subject || 'general',
-          level: directCache.metadata.level || 'intermediate',
-          confidence: directCache.metadata.confidence || 1.0,
-      };
-      return {
-        classification: classification,
-        sources: [], // No documents to return for a cached answer
-        cached: true,
-        answer: directCache.response,
-      };
-    }
-    const semanticCache = await this.redisCache.checkSemanticCache(
-      message,
-      subject || 'general'
-    );
-    if (semanticCache) {
-      this.logger.info({ score: semanticCache.score }, '✓ SEMANTIC CACHE HIT in classifyAndRetrieve');
-      const classification = {
-          subject: semanticCache.metadata.subject || subject || 'general',
-          level: semanticCache.metadata.level || 'intermediate',
-          confidence: semanticCache.metadata.confidence || semanticCache.score,
-      };
-      return {
-        classification: classification,
-        sources: [], // No documents to return for a cached answer
-        cached: true,
-        answer: semanticCache.response,
-      };
-    }
-
     const result = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId });
     
     return { 
@@ -318,115 +271,134 @@ export class TutorChain {
   }
 
   /**
- * Run the chain
- */
-async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
-  try {
-    const input = {
-      message: request.message,
-      sessionId: sessionId || request.sessionId,
-      subject: request.subject,
-      level: request.level,
-    };
+   * Run the chain
+   */
+  async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
+    try {
+      const input = {
+        message: request.message,
+        sessionId: sessionId || request.sessionId,
+        subject: request.subject,
+        level: request.level,
+      };
 
-    //check cache first
-    this.logger.debug({ query: input.message.substring(0, 50) }, 'Checking cache before pipeline...');
+      // First, check cache for a quick win
+      this.logger.debug({ query: input.message.substring(0, 50) }, '[TutorChain] Checking cache before pipeline...');
+      const cacheResult = await this.redisCache.checkUnified(input.message, input.subject || 'general');
 
-    // 1. Check Direct Cache (exact match)
-    const directCache = await this.redisCache.checkDirectCache(
-      input.message,
-      input.subject || 'general'
-    );
-
-    if (directCache) {
-      this.logger.info('✓ DIRECT CACHE HIT - returning instantly');
-      return {
-        answer: directCache.response,
-        classification: {
-          subject: directCache.metadata.subject || input.subject || 'general',
-          level: directCache.metadata.level || input.level || 'intermediate',
-          confidence: directCache.metadata.confidence || 1.0,
-        },
-        cached: true,
-        confidence: directCache.metadata.confidence || 1.0,
-        metadata: {
-          modelUsed: directCache.metadata.modelUsed,
-          validationScore: 1.0,
-        },
-      } as AITutorResponse;
-    }
-
-    // 2. Check Semantic Cache (similarity match)
-    const semanticCache = await this.redisCache.checkSemanticCache(
-      input.message,
-      input.subject || 'general'
-    );
-
-    if (semanticCache) {
-      this.logger.info({ score: semanticCache.score }, '✓ SEMANTIC CACHE HIT - returning instantly');
-      return {
-        answer: semanticCache.response,
-        classification: {
-          subject: semanticCache.metadata.subject || input.subject || 'general',
-          level: semanticCache.metadata.level || input.level || 'intermediate',
-          confidence: semanticCache.metadata.confidence || semanticCache.score,
-        },
-        cached: true,
-        confidence: semanticCache.score,
-        metadata: {
-          modelUsed: semanticCache.metadata.modelUsed,
-          validationScore: semanticCache.score,
-        },
-      } as AITutorResponse;
-    }
-
-    this.logger.debug('Cache miss - running full pipeline...');
-
-    // no cache hit - run full sequence
-    const result = await this.sequence.invoke(input);
-
-    // caching logic, store after generation
-    if (result.answer) {
-      const validation = validateResponse(result.answer);
-      
-      if (validation.isValid) {
-        this.logger.info({ score: validation.score }, 'Caching response after generation');
-        
-        await Promise.all([
-          this.redisCache.storeDirectCache(
-            input.message,
-            result.answer,
-            result.classification.subject,
-            {
-              confidence: result.classification.confidence,
-              modelUsed: result.metadata?.modelUsed,
-              level: result.classification.level,
-            }
-          ),
-          this.redisCache.storeSemanticCache(
-            input.message,
-            result.answer,
-            result.classification.subject,
-            {
-              confidence: result.classification.confidence,
-              modelUsed: result.metadata?.modelUsed,
-              level: result.classification.level,
-            }
-          ),
-        ]);
-        
-        this.logger.info('✓ Stored in both caches');
-      } else {
-        this.logger.warn({ reason: validation.reason }, 'Skipped caching - quality check failed');
+      if (cacheResult.hit) {
+        this.logger.info(`✓ ${cacheResult.type.toUpperCase()} CACHE HIT - returning instantly`);
+        return {
+          answer: cacheResult.response!,
+          classification: {
+            subject: cacheResult.metadata?.subject || input.subject || 'general',
+            level: cacheResult.metadata?.level || input.level || 'intermediate',
+            confidence: cacheResult.metadata?.confidence || cacheResult.score || 1.0,
+          },
+          cached: true,
+          confidence: cacheResult.metadata?.confidence || cacheResult.score || 1.0,
+          metadata: {
+            modelUsed: cacheResult.metadata?.modelUsed,
+            validationScore: cacheResult.score || 1.0,
+            cacheType: cacheResult.type,
+          },
+        } as AITutorResponse;
       }
-    }
+      this.logger.debug('Cache miss - proceeding with classification...');
 
-    return result;
-  } catch (error) {
-    this.logger.error({ error }, '[TutorChain] Run failed');
-    throw error;
+      // --- Start of Fast Path Logic ---
+      
+      // Step 1: Get history and rewrite the query to be standalone.
+      const conversationHistory = input.sessionId ? await this.chatMemory.load(input.sessionId, 5).then(msgs => this.chatMemory.formatUserQueriesOnly(msgs)) : '';
+      const standaloneQuery = await this.classifier['rewriteToStandalone'](input.message, conversationHistory);
+      
+      // Step 2: Classify the standalone query.
+      const classification = await this.classifier.classify(standaloneQuery);
+      
+      const smallTextIntents = ['summarize', 'change_tone', 'proofread', 'make_email_professional'];
+      
+      // Step 3: Check if the intent is a "small text" task.
+      if (classification.intent && smallTextIntents.includes(classification.intent)) {
+        this.logger.info({ intent: classification.intent }, '[TutorChain] Fast path: Small text intent detected. Using classifier LLM directly.');
+
+        // Get the classifier's own LLM (the small, fast model).
+        const llm = await this.modelSelector.getClassifierLLM();
+        this.logger.info({ modelUsed: (llm as any).modelId }, '[TutorChain] Classifier LLM selected for fast path execution.');
+        
+        // Simple prompt for the task.
+        const fastPathPrompt = `You are a helpful assistant. Please ${classification.intent.replace(/_/g, ' ')} the following text:\n\n${standaloneQuery}`;
+        
+        // Invoke the model directly.
+        const response = await llm.generate(fastPathPrompt);
+ 
+        const answer = typeof response === 'string' ? response : JSON.stringify(response);
+
+        // Construct a valid AITutorResponse and return.
+        const fastPathResponse: AITutorResponse = {
+          answer,
+          classification,
+          cached: false,
+          confidence: classification.confidence,
+          sources: [], // No sources for this path
+          metadata: {
+            modelUsed: (llm as any).modelId || 'classifier-model',
+            validationScore: 1,
+            fastPath: true
+          },
+        };
+
+        // Save to memory and cache
+        await this.chatMemory.save(input.sessionId!, input.message, answer!);
+        await this.redisCache.storeDirectCache(input.message, answer, classification.subject, { confidence: classification.confidence, modelUsed: fastPathResponse.metadata?.modelUsed, level: classification.level });
+
+        return fastPathResponse;
+      }
+
+      // --- End of Fast Path Logic ---
+
+      // If it's not a small text task, proceed with the full sequence.
+      this.logger.info({ intent: classification.intent }, '[TutorChain] Standard Path: Intent is not a small text task, running full pipeline...');
+      const result = await this.sequence.invoke(input);
+
+      // Caching logic for the full pipeline result.
+      if (result.answer) {
+        const validation = validateResponse(result.answer);
+        if (validation.isValid) {
+          this.logger.info({ score: validation.score }, 'Caching full pipeline response...');
+          await Promise.all([
+            this.redisCache.storeDirectCache(
+              input.message,
+              result.answer,
+              result.classification.subject,
+              {
+                confidence: result.classification.confidence,
+                modelUsed: result.metadata?.modelUsed,
+                level: result.classification.level,
+              }
+            ),
+            this.redisCache.storeSemanticCache(
+              input.message,
+              result.answer,
+              result.classification.subject,
+              {
+                confidence: result.classification.confidence,
+                modelUsed: result.metadata?.modelUsed,
+                level: result.classification.level,
+              }
+            ),
+          ]);
+          this.logger.info('✓ Stored in both caches');
+        } else {
+          this.logger.warn({ reason: validation.reason }, 'Skipped caching - quality check failed');
+        }
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error({ error }, '[TutorChain] Run failed');
+      throw error;
+    }
   }
-}
 
   /**
    * Stream the chain results
@@ -498,45 +470,29 @@ async run(request: ChatRequest, sessionId?: string): Promise<AITutorResponse> {
 
     try {
       // CHECK CACHE FIRST before streaming
-      this.logger.debug('Checking cache before streaming...');
-      
-      // Check Direct Cache (exact match)
-      const directCache = await this.redisCache.checkDirectCache(
+      this.logger.debug('[TutorChain] Checking cache before streaming...');
+
+      const cacheResult = await this.redisCache.checkUnified(
         userQuery,
         classification.subject
       );
 
-      if (directCache) {
-        this.logger.info('✓ Returning from DIRECT cache (streaming)');
-        callbacks.onToken(directCache.response);
+      if (cacheResult.hit) {
+        this.logger.info(
+          { score: cacheResult.score },
+          `✓ Returning from ${cacheResult.type.toUpperCase()} cache (streaming)`
+        );
+        callbacks.onToken(cacheResult.response!);
         callbacks.onComplete({
-          answer: directCache.response,
-          modelUsed: directCache.metadata.modelUsed,
-          levelUsed: directCache.metadata.levelUsed,
+          answer: cacheResult.response!,
+          modelUsed: cacheResult.metadata?.modelUsed,
+          levelUsed: cacheResult.metadata?.levelUsed,
           latency: 0,
         });
         return;
       }
 
-      // Check Semantic Cache (similarity match)
-      const semanticCache = await this.redisCache.checkSemanticCache(
-        userQuery,
-        classification.subject
-      );
-
-      if (semanticCache) {
-        this.logger.info({ score: semanticCache.score }, '✓ Returning from SEMANTIC cache (streaming)');
-        callbacks.onToken(semanticCache.response);
-        callbacks.onComplete({
-          answer: semanticCache.response,
-          modelUsed: semanticCache.metadata.modelUsed,
-          levelUsed: semanticCache.metadata.levelUsed,
-          latency: 0,
-        });
-        return;
-      }
-
-      this.logger.debug('Cache miss - starting streaming generation...');
+this.logger.debug('Cache miss - starting streaming generation...');
 
       // Get top document as context
       const topDocument = documents.length > 0 ? documents[0] : null;
