@@ -17,6 +17,14 @@ export interface SemanticCacheResult {
   metadata: Record<string, any>;
 }
 
+export interface CacheCheckResult {
+  hit: boolean;
+  response?: string;
+  score?: number;
+  metadata?: Record<string, any>;
+  type: 'direct' | 'semantic' | 'none';
+}
+
 export class RedisCache {
   private redis: RedisClientType;
   private embeddings: BedrockEmbeddings;
@@ -135,24 +143,35 @@ export class RedisCache {
   }
 
   // --- SEMANTIC CACHE ---
+  private generateQueryHash(query: string): string {
+    const normalized = query.toLowerCase().trim();
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i++) {
+      hash = (hash << 5) - hash + normalized.charCodeAt(i);
+    }
+    return `query:${Math.abs(hash)}`;
+  }
+
   async checkSemanticCache(query: string, subject: string): Promise<SemanticCacheResult | null> {
     try {
       await this.connect();
 
       const queryEmbedding = await this.embeddings.embedQuery(query);
-      const pattern = `cache:semantic:${subject}:*`;
-      const keys = await this.redis.keys(pattern);
+      const hashKey = `cache:semantic:${subject}`;
+      const entries = await this.redis.hGetAll(hashKey);
 
-      if (keys.length === 0) {
-        this.logger.debug('Semantic cache empty');
+      if (!entries || Object.keys(entries).length === 0) {
+        this.logger.debug({ hashKey }, 'Semantic cache empty for subject');
         return null;
       }
 
       let bestMatch: SemanticCacheResult | null = null;
       let bestScore = 0;
 
-      for (const key of keys) {
-        const raw = await this.redis.get(key);
+      // This part can still be slow if a subject has thousands of entries.
+      // For now, it's a huge improvement over KEYS.
+      for (const field in entries) {
+        const raw = entries[field];
         if (!raw) continue;
 
         const cached = JSON.parse(raw) as CacheEntry & { embedding: number[] };
@@ -181,6 +200,13 @@ export class RedisCache {
     }
   }
 
+  /**
+   * More efficient batch embedding using embedDocuments
+   */
+  private async getEmbeddingBatch(queries: string[]): Promise<number[][]> {
+    return this.embeddings.embedDocuments(queries);
+  }
+
   async storeSemanticCache(
     query: string,
     response: string,
@@ -192,7 +218,8 @@ export class RedisCache {
 
       const embedding = await this.embeddings.embedQuery(query);
       const timestamp = Date.now();
-      const key = `cache:semantic:${subject}:${timestamp}`;
+      const hashKey = `cache:semantic:${subject}`;
+      const fieldKey = this.generateQueryHash(query);
 
       const entry = {
         response,
@@ -201,8 +228,14 @@ export class RedisCache {
         timestamp,
       };
 
-      await this.redis.setEx(key, this.ttl, JSON.stringify(entry));
-      this.logger.info({ key }, 'Stored in semantic cache (24h TTL)');
+      // Use a pipeline to ensure atomicity of HSET and EXPIRE
+      await this.redis
+        .multi()
+        .hSet(hashKey, fieldKey, JSON.stringify(entry))
+        .expire(hashKey, this.ttl)
+        .exec();
+        
+      this.logger.info({ key: hashKey, field: fieldKey }, 'Stored in semantic cache (24h TTL)');
     } catch (error) {
       this.logger.error(error, 'Semantic cache store failed');
     }
@@ -223,4 +256,42 @@ export class RedisCache {
 
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
+
+   async checkUnified(
+    query: string,
+    subject: string = 'general'
+  ): Promise<CacheCheckResult> {
+    // Run both cache checks in parallel
+    const [directCache, semanticCache] = await Promise.all([
+      this.checkDirectCache(query, subject),
+      this.checkSemanticCache(query, subject)
+    ]);
+
+    // Direct cache has priority (exact match)
+    if (directCache) {
+      this.logger.info('✓ DIRECT CACHE HIT');
+      return {
+        hit: true,
+        response: directCache.response,
+        metadata: directCache.metadata,
+        type: 'direct'
+      };
+    }
+
+    // Then semantic cache
+    if (semanticCache) {
+      this.logger.info({ score: semanticCache.score }, '✓ SEMANTIC CACHE HIT');
+      return {
+        hit: true,
+        response: semanticCache.response,
+        score: semanticCache.score,
+        metadata: semanticCache.metadata,
+        type: 'semantic'
+      };
+    }
+
+    // No cache hit
+    return { hit: false, type: 'none' };
+  }
+
 }

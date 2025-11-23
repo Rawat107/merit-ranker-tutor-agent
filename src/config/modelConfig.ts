@@ -321,6 +321,23 @@ export const classificationConfig = {
     verification_check: [
       'correct', 'right', 'wrong', 'check', 'verify', 'is this',
       'am i right', 'is this correct', 'validate'
+    ],
+    summarize: [
+      'summarize', 'summary', 'condense', 'shorten', 'brief', 'gist',
+      'main points', 'overview', 'recap', 'abstract'
+    ],
+    change_tone: [
+      'change tone', 'make it sound', 'tone of voice', 'formal', 'informal',
+      'friendly', 'professional', 'casual', 'serious', 'humorous', 'optimistic',
+      'pessimistic', 'assertive', 'passive', 'empathetic', 'direct', 'indirect'
+    ],
+    proofread: [
+      'proofread', 'grammar check', 'correct grammar', 'typos', 'spelling',
+      'punctuation', 'errors', 'review text', 'fix mistakes', 'edit'
+    ],
+    make_email_professional: [
+      'make email professional', 'professionalize email', 'rewrite email formally',
+      'improve email for work', 'business email', 'formal email'
     ]
   },
 
@@ -385,7 +402,11 @@ export const classificationConfig = {
     comparative_analysis: 'Markdown table or structured comparison with key differences',
     problem_solving: 'Problem breakdown → approach → detailed solution → verification',
     reasoning_puzzle: 'Logical reasoning steps with clear conclusions',
-    verification_check: 'Yes/No answer with explanation and corrections if needed'
+    verification_check: 'Yes/No answer with explanation and corrections if needed',
+    summarize: 'A concise summary of the provided text',
+    change_tone: 'The rewritten text with the requested tone',
+    proofread: 'The corrected text with grammar and spelling fixes',
+    make_email_professional: 'A professionally rewritten version of the email'
   }
 };
 

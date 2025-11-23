@@ -37,7 +37,11 @@ const ClassificationSchema = z.object({
     'definition_lookup',
     'reasoning_puzzle',
     'creative_generation',
-    'verification_check'
+    'verification_check',
+    'summarize',
+    'change_tone',
+    'proofread',
+    'make_email_professional'
   ])
     .describe('The user intent - what type of response format is expected'),
   expectedFormat: z.string()
