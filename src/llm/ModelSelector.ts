@@ -87,8 +87,18 @@ export class ModelSelector {
         return this.cache.get(cacheKey)!;
       }
 
+
       // Classifier uses basic tier with config values
       const llm = createTierLLM('basic', entry, this.logger, cfg.temperature, cfg.maxTokens);
+
+      try {
+        (llm as any).modelId = llm.getModelInfo().modelId;
+      } catch (_) {
+        (llm as any).modelId = entry.bedrockId;
+      }
+
+      this.logger.info({ classifierModel: (llm as any).modelId }, '[ModelSelector] Classifier LLM created and cached');
+
       this.cache.set(cacheKey, llm);
 
       return llm;

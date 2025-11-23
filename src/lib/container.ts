@@ -8,37 +8,41 @@ import { createTutorChain } from '../chains/questionChat.js';
 import { ChatMemory } from '../cache/ChatMemory.js';
 import { createClient } from 'redis';
 import { loadAllSecrets } from './secrets.js';
+import { PresentationOutlineChain } from '../presentation/outlineChain.js';
+import { PresentationContentChain } from '../presentation/contentChain.js';
+import { RedisCache } from '../cache/RedisCache.js';
 
 export function createContainer(logger: pino.Logger) {
   let secrets: any = null;
+  let redisClient: any = null;
 
   return {
     // Initialize and load secrets (called once at startup)
     initialize: async () => {
-      secrets = await loadAllSecrets(); //This handles dev/prod automatically!
+      secrets = await loadAllSecrets(); // Handles dev/prod automatically
       logger.info('✅ Secrets loaded');
+
+      redisClient = createClient({
+        url: secrets.redisUrl,
+        password: secrets.redisPassword,
+      });
+
+      redisClient.on('error', (err: any) => logger.error('Redis Client Error', err));
+
+      await redisClient.connect();
+      logger.info('✅ Redis client connected');
     },
 
-    // Build dependencies with secrets
+    // Build Tutor Chain dependencies
     getTutorChain: () => {
-      if (!secrets) throw new Error('Call initialize() first');
+      if (!secrets || !redisClient) throw new Error('Call initialize() first');
 
       const modelSelector = new ModelSelector(logger);
       const classifier = new Classifier(logger, undefined);
       const retriever = new AWSKnowledgeBaseRetriever(logger);
-      const reranker = new Reranker(logger, secrets.cohereApiKey); 
+      const reranker = new Reranker(logger, secrets.cohereApiKey);
       const evaluatePrompt = new EvaluatePrompt(modelSelector, logger);
-
-      const redisClient = createClient({
-        url: secrets.redisUrl,        
-        password: secrets.redisPassword, 
-      });
-
-      redisClient.connect().catch((err) =>
-        logger.error(err, 'Failed to connect Redis')
-      );
-
-      const chatMemory = new ChatMemory(redisClient as any, logger);
+      const chatMemory = new ChatMemory(redisClient, logger);
 
       return createTutorChain(
         classifier,
@@ -48,8 +52,32 @@ export function createContainer(logger: pino.Logger) {
         evaluatePrompt,
         chatMemory,
         logger,
-        secrets 
+        secrets
       );
+    },
+
+    // Build Presentation Chain dependencies
+    // Returns: { outlineChain, contentChain }
+    getPresentationChains: () => {
+      if (!secrets || !redisClient) throw new Error('Call initialize() first');
+
+      const redisCache = new RedisCache(logger);
+      
+      const outlineChain = new PresentationOutlineChain(
+        redisCache,
+        logger,
+        secrets.tavilyApiKey
+      );
+      
+      const contentChain = new PresentationContentChain(
+        logger,
+      );
+
+      return {
+        outlineChain,
+        contentChain,
+        redisCache,
+      };
     },
 
     getReranker: () => {

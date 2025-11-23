@@ -311,3 +311,62 @@ export function getSystemPromptByClassification(classification: Classification):
 
   return systemPrompts[subject]?.[level] || systemPrompts.general[level] || systemPrompts.general.basic;
 }
+
+
+export function buildPresentationOutlinePrompt(
+  request: any,
+  searchResults: string
+): string {
+  return `You are an expert presentation designer. Create a detailed outline for a presentation.
+
+Title: "${request.title}"
+Description: ${request.description || "Not provided"}
+Number of Slides: ${request.noOfSlides}
+Level: ${request.level}
+Language: ${request.language}
+Design Style: ${request.designStyle}
+
+Web Search Context:
+${searchResults}
+
+Create a JSON array with exactly ${request.noOfSlides} slide objects. Each slide must have:
+- slideNumber: number (1 to ${request.noOfSlides})
+- title: string (engaging slide title)
+- keyPoints: string[] (3-5 concise points)
+- speakerNotes: string (brief speaker talking points)
+
+Return ONLY valid JSON array, no markdown formatting.
+
+Example format:
+[
+  {
+    "slideNumber": 1,
+    "title": "Introduction to the Topic",
+    "keyPoints": ["Key concept 1", "Key concept 2", "Key concept 3"],
+    "speakerNotes": "Welcome the audience and introduce the main topic"
+  }
+]`;
+}
+
+/**
+ * Build slide content generation prompt
+ */
+export function buildSlideContentPrompt(slide: any, context: string): string {
+  return `Generate detailed content for a presentation slide.
+
+Slide Title: "${slide.title}"
+Key Points: ${slide.keyPoints.join(", ")}
+Context: ${context.substring(0, 500)}
+
+Create professional, engaging slide content. The content should:
+1. Have a clear main message
+2. Support the key points
+3. Be concise (150-250 words)
+4. Include a relevant image description for Unsplash search
+
+Return JSON with:
+{
+  "content": "markdown content here with ## headings and bullet points",
+  "imageSearchQuery": "specific search query for Unsplash (2-4 words)"
+}`;
+}

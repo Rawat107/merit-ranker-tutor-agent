@@ -68,6 +68,7 @@ export interface TutorConfig {
   modelRegistry: Record<string, ModelRegistryEntry>;
   classifier: ModelConfig & { modelId: string };
   reranker: ModelConfig & { modelId: string };
+  imageGenerator: ModelConfig & { modelId: string; region?: string };
   subjects: Record<string, Record<string, ModelConfig>>;
 }
 
@@ -109,6 +110,61 @@ export interface WebSearchResult {
 export interface ClassificationWithIntent extends Classification {
   intent?: string;
   expectedFormat?: string;
+}
+
+export interface SlideOutlineRequest {
+  title: string;
+  description?: string;
+  noOfSlides: number;
+  level: 'basic' | 'intermediate' | 'advanced';
+  language: 'en' | 'hi';
+  designStyle: string;
+  colorTheme: string;
+  userId: string;
+}
+
+export interface SlideOutline {
+  slideNumber: number;
+  title: string;
+  keyPoints: string[];
+  speakerNotes?: string;
+}
+
+export interface PresentationOutlineResponse {
+  slideId: string;
+  userId: string;
+  title: string;
+  status: 'GENERATING' | 'READY' | 'FAILED';
+  noOfSlides: number;
+  level: string;
+  language: string;
+  designStyle: string;
+  colorTheme: string;
+  outline: SlideOutline[];
+  webSearchResults?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PresentationSlideContent {
+  slideNumber: number;
+  title: string;
+  content: string;
+  keyPoints: string[];
+  imageUrl?: string;
+  imageAlt?: string;
+  speakerNotes?: string;
+}
+
+export interface PresentationFinalResponse {
+  slideId: string;
+  userId: string;
+  title: string;
+  status: 'READY';
+  slidesContent: PresentationSlideContent[];
+  totalSlides: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // LangChain BaseMessage type (re-export from @langchain/core/messages)
