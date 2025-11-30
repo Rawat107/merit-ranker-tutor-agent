@@ -1,10 +1,11 @@
 import { ChatBedrockConverse } from "@langchain/aws";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { z } from 'zod';
-import {traceable} from 'langsmith/traceable';
-import { Classification} from "../types/index.ts";
+import { traceable } from 'langsmith/traceable';
+import { Classification } from "../types/index.ts";
 import { modelConfigService } from "../config/modelConfig.ts";
 import { buildClassifierSystemPrompt, buildStandaloneRewritePrompt } from "../utils/promptTemplates.ts";
+import { LinguaCompressor } from '../compression/lingua_compressor.js';
 import pino from "pino";
 
 // Define Zod schema for Classification with intent
@@ -45,6 +46,7 @@ const ClassificationSchema = z.object({
   ])
     .describe('The user intent - what type of response format is expected'),
   expectedFormat: z.string()
+    .optional()
     .describe('Expected output format based on intent and subject')
 });
 
@@ -64,7 +66,7 @@ export class Classifier {
   private classifyPromptTemplate: ChatPromptTemplate | null = null;
   private rewritePromptTemplate: ChatPromptTemplate | null = null;
 
-  constructor(private logger: pino.Logger, useExternalLLM?: any) {
+  constructor(private logger: pino.Logger, private compressor: LinguaCompressor, useExternalLLM?: any) {
     this.subjects = modelConfigService.getAvailableSubjects();
 
     // Initialize classification prompt template
@@ -78,8 +80,6 @@ export class Classifier {
       ['system', buildStandaloneRewritePrompt()],
       ['human', 'Current Query: {query}\n\nConversation History (User queries only):\n{history}']
     ]);
-
-
 
     // Initialize Langchain ChatBedrockConverse if no external LLM provided
     if (!useExternalLLM) {
@@ -177,57 +177,69 @@ export class Classifier {
    * Standalone query rewriter 
    */
   private rewriteToStandalone = traceable(
-  async (query: string, conversationHistory: string): Promise<string> => {
-    if (!this.llm) {
-      throw new Error('LLM not initialized for standalone rewrite');
-    }
-
-    if (!this.rewritePromptTemplate) {
-      throw new Error('Rewrite prompt template not initialized');
-    }
-
-    // Skip rewriting for very long queries (likely already standalone)
-    if (query.length > 200) {
-      this.logger.debug('[Classifier] Query too long (>200 chars), likely standalone - skipping rewrite');
-      return query;
-    }
-
-    try {
-      const chain = this.rewritePromptTemplate.pipe(this.llm);
-      const response = await chain.invoke({
-        query,
-        history: conversationHistory
-      });
-
-      const content = typeof response.content === 'string'
-        ? response.content
-        : JSON.stringify(response.content);
-
-      // Extract the rewritten query (clean up the response)
-      let rewritten = content
-        .replace(/^(Rewritten Query:|Standalone Question:|Question:)/i, '')
-        .trim()
-        .replace(/^["']|["']$/g, ''); // Remove quotes if present
-
-      // Validate rewritten query
-      if (rewritten.length < 5) {
-        this.logger.warn('[Classifier] Rewrite produced invalid result, using original');
-        return query;
+    async (query: string, conversationHistory: string): Promise<string> => {
+      if (!this.llm) {
+        throw new Error('LLM not initialized for standalone rewrite');
       }
 
-      return rewritten;
-    } catch (error) {
-      this.logger.error({ error }, '[Classifier] Standalone rewrite failed');
-      throw error;
-    }
-  },
-  { name: 'StandaloneRewriter', run_type: 'chain' }
-);
+      if (!this.rewritePromptTemplate) {
+        throw new Error('Rewrite prompt template not initialized');
+      }
+
+      try {
+        // Compress history to reduce its weight and token cost
+        let processedHistory = conversationHistory;
+        if (conversationHistory && conversationHistory.length > 100) {
+          processedHistory = await this.compressor.compress(conversationHistory, {
+            rate: 0.6, // Aggressive compression for history
+            useSentenceLevel: true
+          });
+          this.logger.info({
+            original: conversationHistory.length,
+            compressed: processedHistory.length
+          }, '[Classifier] Compressed conversation history for rewrite');
+        }
+
+        // Format the prompt first
+        const formattedPrompt = await this.rewritePromptTemplate.format({
+          query,
+          history: processedHistory
+        });
+
+
+
+        // Invoke LLM with original prompt
+        const response = await this.llm.invoke(formattedPrompt);
+
+        const content = typeof response.content === 'string'
+          ? response.content
+          : JSON.stringify(response.content);
+
+        // Extract the rewritten query (clean up the response)
+        let rewritten = content
+          .replace(/^(Rewritten Query:|Standalone Question:|Question:)/i, '')
+          .trim()
+          .replace(/^["']|["']$/g, ''); // Remove quotes if present
+
+        // Validate rewritten query
+        if (rewritten.length < 5) {
+          this.logger.warn('[Classifier] Rewrite produced invalid result, using original');
+          return query;
+        }
+
+        return rewritten;
+      } catch (error) {
+        this.logger.error({ error }, '[Classifier] Standalone rewrite failed');
+        throw error;
+      }
+    },
+    { name: 'StandaloneRewriter', run_type: 'chain' }
+  );
 
   /**
    * LLM-based classification using LangChain with JSON mode
    */
-  private llmClassify = traceable( async (query: string): Promise<ClassificationWithIntent> => {
+  private llmClassify = traceable(async (query: string): Promise<ClassificationWithIntent> => {
     if (!this.llm) {
       throw new Error('LLM not initialized');
     }
@@ -238,8 +250,22 @@ export class Classifier {
 
     let result: any;
     try {
-      const chain = this.classifyPromptTemplate.pipe(this.llm);
-      const response = await chain.invoke({ query });
+      // Format the prompt first
+      const formattedPrompt = await this.classifyPromptTemplate.format({ query });
+
+      // Compress the prompt
+      const compressedPrompt = await this.compressor.compress(formattedPrompt, {
+        rate: 0.9 // Very gentle compression (keep 90%) to preserve JSON structure instructions
+      });
+
+      this.logger.info({
+        originalLength: formattedPrompt.length,
+        compressedLength: compressedPrompt.length,
+        ratio: (compressedPrompt.length / formattedPrompt.length).toFixed(2)
+      }, '[Classifier] Classification prompt compressed');
+
+      // Invoke LLM with compressed prompt
+      const response = await this.llm.invoke(compressedPrompt);
 
       const content = typeof response.content === 'string'
         ? response.content
@@ -275,7 +301,7 @@ export class Classifier {
         level: validated.level as 'basic' | 'intermediate' | 'advanced',
         confidence: validated.confidence,
         intent: validated.intent,
-        expectedFormat: validated.expectedFormat
+        expectedFormat: validated.expectedFormat || 'Direct answer with bullet points or concise explanation'
       };
 
     } catch (error: any) {
@@ -301,7 +327,7 @@ export class Classifier {
               level: validated.level as 'basic' | 'intermediate' | 'advanced',
               confidence: validated.confidence,
               intent: validated.intent,
-              expectedFormat: validated.expectedFormat
+              expectedFormat: validated.expectedFormat || 'Direct answer with bullet points or concise explanation'
             };
           } catch (retryError) {
             this.logger.error({ error: retryError }, '[Classifier] Retry after mapping failed');
@@ -310,9 +336,9 @@ export class Classifier {
       }
 
       throw error;
-      }
-    }, 
-    { name: 'LLMClassifier', run_type: 'chain'}
+    }
+  },
+    { name: 'LLMClassifier', run_type: 'chain' }
   )
 
   /**
@@ -447,6 +473,6 @@ export class Classifier {
   }
 }
 
-export function createClassifier(logger: pino.Logger): Classifier {
-  return new Classifier(logger);
+export function createClassifier(logger: pino.Logger, compressor: LinguaCompressor): Classifier {
+  return new Classifier(logger, compressor);
 }

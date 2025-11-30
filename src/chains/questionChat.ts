@@ -7,7 +7,7 @@ import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
 import { Reranker } from '../reranker/Reranker.js';
 import { EvaluatePrompt, EvaluatePromptInput, EvaluatePromptOutput } from '../prompts/evaluatorPrompt.js';
-import { RedisCache } from '../cache/RedisCache.js'; 
+import { RedisCache } from '../cache/RedisCache.js';
 import { ChatMemory } from '../cache/ChatMemory.js';
 import { webSearchTool } from '../tools/webSearch.js';
 import { validateResponse } from '../utils/responseValidator.js';
@@ -37,12 +37,12 @@ export class TutorChain {
     private evaluatePrompt: EvaluatePrompt,
     private chatMemory: ChatMemory,
     private logger: pino.Logger,
-    private secrets: any 
+    private secrets: any
   ) {
 
     // Initialize RedisCache
-    this.redisCache = new RedisCache(logger); 
-    
+    this.redisCache = new RedisCache(logger);
+
     // Build the RunnableSequences
     this.classifyAndRetrieveChain = this.buildClassifyAndRetrieveChain();
     this.sequence = this.buildSequence();
@@ -158,9 +158,9 @@ export class TutorChain {
             }
           }
         }
-        
+
         this.logger.info({ count: retrievedDocs.length }, '[TutorChain] Retrieval complete');
-        
+
         return { ...input, classification, retrievedDocs, standaloneQuery };
       } catch (error) {
         this.logger.error({ error, query: input.message }, '[TutorChain] Classify/retrieve step failed');
@@ -183,26 +183,26 @@ export class TutorChain {
     const shouldRerank = finalDocs.length > 0 && (finalDocs[0].score || 0) < 0.85;
 
     if (shouldRerank) {
-        this.logger.info('[TutorChain] Reranking documents...');
-        finalDocs = await this.reranker.rerank(finalDocs, queryForRerank, 3);
+      this.logger.info('[TutorChain] Reranking documents...');
+      finalDocs = await this.reranker.rerank(finalDocs, queryForRerank, 3);
     } else {
-        this.logger.info('[TutorChain] Skipping rerank - high-quality docs');
-        finalDocs = finalDocs.slice(0, 3);
+      this.logger.info('[TutorChain] Skipping rerank - high-quality docs');
+      finalDocs = finalDocs.slice(0, 3);
     }
-    
+
     return { ...input, rerankedDocs: finalDocs };
   }, { name: "Rerank" });
 
   private _evaluate = traceable(async (input: any) => {
     const topDocument = input.rerankedDocs[0]?.document || null;
-      
+
     const evaluateInput: EvaluatePromptInput = {
-        userQuery: input.message,
-        classification: input.classification,
-        topDocument,
-        userPrefs: USER_PREFS,
-        subscription: 'free',
-        conversationHistory: input.conversationHistory,
+      userQuery: input.message,
+      classification: input.classification,
+      topDocument,
+      userPrefs: USER_PREFS,
+      subscription: 'free',
+      conversationHistory: input.conversationHistory,
     };
 
     const evaluationOutput = await this.evaluatePrompt.evaluate(evaluateInput);
@@ -211,30 +211,30 @@ export class TutorChain {
 
   private _finalize = traceable(async (input: any) => {
     try {
-        const { evaluationOutput } = input;
-        const validation = validateResponse(evaluationOutput.answer);
+      const { evaluationOutput } = input;
+      const validation = validateResponse(evaluationOutput.answer);
 
-        if (validation.isValid && input.sessionId) {
-            await this.chatMemory.save(input.sessionId, input.message, evaluationOutput.answer);
-            this.logger.info({ sessionId: input.sessionId }, '[TutorChain] Saved to memory');
-        }
+      if (validation.isValid && input.sessionId) {
+        await this.chatMemory.save(input.sessionId, input.message, evaluationOutput.answer);
+        this.logger.info({ sessionId: input.sessionId }, '[TutorChain] Saved to memory');
+      }
 
-        const response: AITutorResponse = {
-            answer: evaluationOutput.answer,
-            sources: input.rerankedDocs,
-            classification: input.classification,
-            cached: false,
-            confidence: input.classification.confidence,
-            metadata: {
-                modelUsed: evaluationOutput.modelUsed,
-                validationScore: validation.score,
-            },
-        };
+      const response: AITutorResponse = {
+        answer: evaluationOutput.answer,
+        sources: input.rerankedDocs,
+        classification: input.classification,
+        cached: false,
+        confidence: input.classification.confidence,
+        metadata: {
+          modelUsed: evaluationOutput.modelUsed,
+          validationScore: validation.score,
+        },
+      };
 
-        return response;
+      return response;
     } catch (error) {
-        this.logger.error({ error }, '[TutorChain] Finalize failed');
-        throw error;
+      this.logger.error({ error }, '[TutorChain] Finalize failed');
+      throw error;
     }
   }, { name: "Finalize" });
 
@@ -262,11 +262,11 @@ export class TutorChain {
     const { message, subject, level } = request;
 
     const result = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId });
-    
-    return { 
-        classification: result.classification, 
-        sources: result.retrievedDocs, 
-        cached: false 
+
+    return {
+      classification: result.classification,
+      sources: result.retrievedDocs,
+      cached: false
     };
   }
 
@@ -307,16 +307,16 @@ export class TutorChain {
       this.logger.debug('Cache miss - proceeding with classification...');
 
       // --- Start of Fast Path Logic ---
-      
+
       // Step 1: Get history and rewrite the query to be standalone.
       const conversationHistory = input.sessionId ? await this.chatMemory.load(input.sessionId, 5).then(msgs => this.chatMemory.formatUserQueriesOnly(msgs)) : '';
       const standaloneQuery = await this.classifier['rewriteToStandalone'](input.message, conversationHistory);
-      
+
       // Step 2: Classify the standalone query.
       const classification = await this.classifier.classify(standaloneQuery);
-      
+
       const smallTextIntents = ['summarize', 'change_tone', 'proofread', 'make_email_professional'];
-      
+
       // Step 3: Check if the intent is a "small text" task.
       if (classification.intent && smallTextIntents.includes(classification.intent)) {
         this.logger.info({ intent: classification.intent }, '[TutorChain] Fast path: Small text intent detected. Using classifier LLM directly.');
@@ -326,13 +326,13 @@ export class TutorChain {
         // Prefer the stable getModelInfo method instead of relying on a dynamic property
         const classifierModelId = llm.getModelInfo ? llm.getModelInfo().modelId : (llm as any).modelId;
         this.logger.info({ modelUsed: classifierModelId }, '[TutorChain] Classifier LLM selected for fast path execution.');
-        
+
         // Simple prompt for the task.
         const fastPathPrompt = `You are a helpful assistant. Please ${classification.intent.replace(/_/g, ' ')} the following text:\n\n${standaloneQuery}`;
-        
+
         // Invoke the model directly.
         const response = await llm.generate(fastPathPrompt);
- 
+
         const answer = typeof response === 'string' ? response : JSON.stringify(response);
 
         // Construct a valid AITutorResponse and return.
@@ -419,7 +419,7 @@ export class TutorChain {
       };
 
       const stream = await this.sequence.stream(input);
-      
+
       if (callbacks?.onToken) {
         for await (const chunk of stream) {
           if (chunk?.evaluationOutput?.answer) {
@@ -494,7 +494,7 @@ export class TutorChain {
         return;
       }
 
-this.logger.debug('Cache miss - starting streaming generation...');
+      this.logger.debug('Cache miss - starting streaming generation...');
 
       // Get top document as context
       const topDocument = documents.length > 0 ? documents[0] : null;
@@ -506,10 +506,12 @@ this.logger.debug('Cache miss - starting streaming generation...');
 
       if (sessionId) {
         const messages = await this.chatMemory.load(sessionId, 5);
+        // FIX: Use full history for final evaluation
+        conversationHistory = this.chatMemory.format(messages).historyText;
+        // Still extract user name from full messages
         const formatted = this.chatMemory.format(messages, true);
-        conversationHistory = formatted.historyText;
         userName = formatted.userName;
-        this.logger.info({ sessionId, messageCount: messages.length, userName }, '✓ Loaded conversation history');
+        this.logger.info({ sessionId, messageCount: messages.length, userName, historyLength: conversationHistory.length }, '✓ Loaded conversation history (user queries only)');
       } else {
         this.logger.warn('No sessionId provided - chat history disabled');
       }
@@ -541,7 +543,7 @@ this.logger.debug('Cache miss - starting streaming generation...');
 
       const wrappedCallbacks = {
         ...callbacks,
-        onMetadata: callbacks.onMetadata || (() => {}),
+        onMetadata: callbacks.onMetadata || (() => { }),
         onComplete: (result: EvaluatePromptOutput) => {
           finalAnswer = result.answer;
           capturedResult = result;
@@ -615,50 +617,50 @@ this.logger.debug('Cache miss - starting streaming generation...');
     sessionId?: string
   ): Promise<void> {
     const traceableChatStream = traceable(async (req: ChatRequest, sessId?: string) => {
-        const { message, subject, level } = req;
-        this.logger.info(
-          {
-            query: message.substring(0, 80),
-            subject: subject,
-            level: level,
-            sessionId: sessId,
-          },
-          '[TutorChain] Chat stream started'
+      const { message, subject, level } = req;
+      this.logger.info(
+        {
+          query: message.substring(0, 80),
+          subject: subject,
+          level: level,
+          sessionId: sessId,
+        },
+        '[TutorChain] Chat stream started'
+      );
+
+      try {
+        // Use the chain for classification and retrieval
+        const classifyAndRetrieveResult = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId: sessId });
+        const { classification, retrievedDocs, standaloneQuery } = classifyAndRetrieveResult;
+
+        // Rerank documents
+        const rerankedResults = await this.reranker.rerank(retrievedDocs, standaloneQuery, 3);
+
+        if (callbacks.onMetadata) {
+          callbacks.onMetadata({
+            classification: classification,
+            sources: rerankedResults,
+          });
+        }
+
+        const rerankedDocs = rerankedResults.map(result => result.document);
+
+        // Evaluate and stream the final answer
+        await this.evaluateStreaming(
+          message, // pass original message to evaluate
+          classification,
+          rerankedDocs,
+          req.userSubscription || 'free',
+          callbacks,
+          sessId
         );
 
-        try {
-          // Use the chain for classification and retrieval
-          const classifyAndRetrieveResult = await this.classifyAndRetrieveChain.invoke({ message, subject, level, sessionId: sessId });
-          const { classification, retrievedDocs, standaloneQuery } = classifyAndRetrieveResult;
-
-          // Rerank documents
-          const rerankedResults = await this.reranker.rerank(retrievedDocs, standaloneQuery, 3);
-          
-          if (callbacks.onMetadata) {
-            callbacks.onMetadata({
-                classification: classification,
-                sources: rerankedResults,
-            });
-          }
-          
-          const rerankedDocs = rerankedResults.map(result => result.document);
-
-          // Evaluate and stream the final answer
-          await this.evaluateStreaming(
-            message, // pass original message to evaluate
-            classification,
-            rerankedDocs,
-            req.userSubscription || 'free',
-            callbacks,
-            sessId
-          );
-
-        } catch (error) {
-          this.logger.error({ error }, '[TutorChain] Chat stream failed');
-          callbacks.onError(error as Error);
-        }
+      } catch (error) {
+        this.logger.error({ error }, '[TutorChain] Chat stream failed');
+        callbacks.onError(error as Error);
+      }
     }, { name: 'TutorStreamingChain' });
-    
+
     await traceableChatStream(request, sessionId);
   }
 
@@ -678,7 +680,7 @@ export function createTutorChain(
   evaluatePrompt: EvaluatePrompt,
   chatMemory: ChatMemory,
   logger: pino.Logger,
-  secrets: any 
+  secrets: any
 ): TutorChain {
   return new TutorChain(classifier, retriever, modelSelector, reranker, evaluatePrompt, chatMemory, logger, secrets);
 }

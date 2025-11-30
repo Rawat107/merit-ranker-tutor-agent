@@ -169,3 +169,5 @@ export interface PresentationFinalResponse {
 
 // LangChain BaseMessage type (re-export from @langchain/core/messages)
 export { BaseMessage } from '@langchain/core/messages';
+
+export * from '../compression/lingua_compressor';

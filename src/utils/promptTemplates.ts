@@ -68,8 +68,8 @@ export function buildEnhancedPrompt(
   topDocument: Document | null,
   userPrefs?: Record<string, any>
 ): ChatPromptTemplate {
-  
-  const shotExample = topDocument 
+
+  const shotExample = topDocument
     ? `\n[EXAMPLE FROM KB]\nSource: ${topDocument.id}\nContent: ${topDocument.text.substring(0, 300)}...\n`
     : '';
 
@@ -101,7 +101,7 @@ export function buildEnhancedPrompt(
  */
 function buildIntentGuidance(classification: Classification): string {
   const intent = (classification as any).intent || 'factual_retrieval';
-  
+
   const guidanceMap: Record<string, string> = {
     'factual_retrieval': 'Provide a direct, concise answer with bullet points if multiple items. Include source citations.',
     'step_by_step_explanation': 'Break the response into numbered steps (1., 2., 3., ...). Explain each step clearly. End with "Final Answer:"',
@@ -128,17 +128,17 @@ export function buildEvaluationPrompt(
   userPrefs?: Record<string, any>,
   conversationHistory?: string,
   userName?: string | null
-): string {
-  
+): { systemPrompt: string; conversationHistory: string; referenceAndQuery: string } {
+
   const shotExample = topDocument
     ? (() => {
-        const url = (topDocument.metadata && (topDocument.metadata as any).url) || '';
-        const title = (topDocument.metadata && (topDocument.metadata as any).title) || topDocument.id;
-        const linkPart = url ? ` (Link: ${url})` : '';
-        const header = `\n[REFERENCE MATERIAL]\nSource: ${title}${linkPart}\n`;
-        const body = `${(topDocument.text || '').substring(0, 240)}\n`;
-        return header + body;
-      })()
+      const url = (topDocument.metadata && (topDocument.metadata as any).url) || '';
+      const title = (topDocument.metadata && (topDocument.metadata as any).title) || topDocument.id;
+      const linkPart = url ? ` (Link: ${url})` : '';
+      const header = `\n[REFERENCE MATERIAL]\nSource: ${title}${linkPart}\n`;
+      const body = `${(topDocument.text || '').substring(0, 240)}\n`;
+      return header + body;
+    })()
     : '';
 
   const responseFormat = getResponseFormatByIntent(intent);
@@ -146,17 +146,12 @@ export function buildEvaluationPrompt(
     ? `Language: ${userPrefs.language} | Exam: ${userPrefs.exam} | Style: ${userPrefs.tutorStyle}\n`
     : '';
 
-  // Format conversation history if provided
-  const historyBlock = conversationHistory 
-    ? `\n[CONVERSATION HISTORY]\n${conversationHistory}\n`
-    : '';
-
   // Build the system message with natural instructions
-  const greetingInstruction = userName 
+  const greetingInstruction = userName
     ? `The user's name is ${userName}. Greet them naturally by name when appropriate and maintain consistency with previous conversations.`
     : 'If the user introduces themselves or mentions their name in the conversation history, greet them naturally and remember it throughout the conversation.';
 
-  const systemMessage = `You are a professional educator for government exams in India. You are specializing in ${classification.subject}. Your role is to help students prepare for these exams by providing clear, accurate, and actionable answers, and by guiding them to think about what to ask next.
+  const systemPrompt = `You are a professional educator for government exams in India. You are specializing in ${classification.subject}. Your role is to help students prepare for these exams by providing clear, accurate, and actionable answers, and by guiding them to think about what to ask next.
 Difficulty Level: ${classification.level.toUpperCase()}
 ${prefsBlock}
 
@@ -167,6 +162,8 @@ CONVERSATION GUIDELINES:
 - If asked about information from earlier in the conversation, recall it accurately
 - When citing sources from web search, include the clickable URL if available
 
+CRITICAL: Do NOT repeat or include the conversation history in your response. Use it only as context to understand the current query.
+
 RESPONSE FORMAT:
 ${responseFormat}
 
@@ -175,13 +172,22 @@ CRITICAL: Always follow the response format above. Make your answer clear, accur
 After your main answer, suggest ONE relevant next question the student could ask to continue learning. Format this as:
 Suggested Next Question: <your suggested question here>`;
 
-  // Build the human message with the actual query embedded
-  const humanMessage = `${historyBlock}Current User Query: ${userQuery}${shotExample}
+  // Build conversation history block (will be compressed separately)
+  const historyBlock = conversationHistory
+    ? `\n[CONVERSATION HISTORY]\n${conversationHistory}\n`
+    : '';
+
+  // Build reference and query block (will NOT be compressed)
+  const referenceAndQuery = `Current User Query: ${userQuery}${shotExample}
 
 Provide your response in the format specified above, using the conversation history and reference material as needed. Remember to include a single suggested next question at the end.`;
 
-  // Return as plain text prompt
-  return `${systemMessage}\n\n${humanMessage}`;
+  // Return as 3 separate parts for selective compression
+  return {
+    systemPrompt,
+    conversationHistory: historyBlock,
+    referenceAndQuery
+  };
 }
 
 export function buildStandaloneRewritePrompt(): string {
@@ -232,35 +238,35 @@ function getResponseFormatByIntent(intent: string): string {
 - Provide direct answer in 1-2 sentences
 - Add key points as bullet list
 - End with source if applicable`,
-    
+
     'step_by_step_explanation': `
 1. Begin with "Steps:"
 2. Number each step clearly
 3. Explain the "why" for each step
 4. Use LaTeX for formulas (\\( ... \\))
 5. End with "Final Answer:"`,
-    
+
     'comparative_analysis': `
 - Create Markdown table if 2-4 items
 - Format: | Item | Aspect 1 | Aspect 2 |
 - List similarities first (section: "Similarities")
 - Then list key differences (section: "Key Differences")
 - Highlight what makes each distinct`,
-    
+
     'problem_solving': `
 - **Problem:** [Restate problem]
 - **Approach:** [Method to solve]
 - **Solution:** [Step-by-step work]
 - **Verification:** [Check answer]
 - **Final Answer:** [Result]`,
-    
+
     'reasoning_puzzle': `
 - **Given:** [List facts/assumptions]
 - **Reasoning Chain:**
   1. [First deduction] → [Why?]
   2. [Second deduction] → [Why?]
 - **Conclusion:** [Final answer with confidence]`,
-    
+
     'verification_check': `
 - **Verdict:** [TRUE/FALSE/CORRECT/INCORRECT]
 - **Explanation:** [Why this verdict]

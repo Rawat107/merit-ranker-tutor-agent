@@ -15,21 +15,22 @@ import { ModelSelector } from './llm/ModelSelector.js';
 import { PresentationOutlineChain } from './presentation/outlineChain.js';
 import { PresentationContentChain } from './presentation/contentChain.js';
 import { SlideOutlineRequest } from './types/index.js';
+import { linguaCompressor } from './compression/lingua_compressor.js';
 
 
 export async function createServer(): Promise<FastifyInstance> {
 
-    const httpsAgent = new Agent({
+  const httpsAgent = new Agent({
     keepAlive: true,
     maxSockets: 50,
     maxFreeSockets: 10,
     timeout: 60000,
   });
 
-    
 
-// Enable connection reuse globally
-process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
+
+  // Enable connection reuse globally
+  process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
 
   const server = Fastify({
     logger: {
@@ -42,16 +43,16 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   });
 
   server.decorate('awsConfig', {
-      region: process.env.AWS_REGION || 'ap-south-1',
-      requestHandler: new NodeHttpHandler({
-        httpsAgent: httpsAgent, // ← USE the agent you created
-        requestTimeout: 30000,
-      }),
-      maxAttempts: 3,
-    });
+    region: process.env.AWS_REGION || 'ap-south-1',
+    requestHandler: new NodeHttpHandler({
+      httpsAgent: httpsAgent, // ← USE the agent you created
+      requestTimeout: 30000,
+    }),
+    maxAttempts: 3,
+  });
 
   if (appConfig.nodeEnv === 'development') {
-  server.addHook('onRequest', (request, reply, done) => {
+    server.addHook('onRequest', (request, reply, done) => {
       if (!request.headers.authorization && process.env.DEV_JWT_TOKEN) {
         request.headers.authorization = `Bearer ${process.env.DEV_JWT_TOKEN}`;
       }
@@ -65,7 +66,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
     server.log.info('LangSmith tracing disabled');
   }
 
-  const logger = pino({ 
+  const logger = pino({
     level: appConfig.logLevel,
     transport: appConfig.nodeEnv === 'development' ? { target: 'pino-pretty' } : undefined,
   });
@@ -79,7 +80,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   await server.register(rateLimit, {
     max: 100,
     timeWindow: '10 minute',
-    cache: 10000, 
+    cache: 10000,
     allowList: ['127.0.0.1'],
     errorResponseBuilder: (req, context) => ({
       statusCode: 429,
@@ -107,9 +108,9 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
     throw new Error('COGNITO_CLIENT_ID and COGNITO_USER_POOL_ID must be set in environment variables');
   }
 
- await server.register(FastifyAwsJwtVerify as any, {
+  await server.register(FastifyAwsJwtVerify as any, {
     clientId: cognitoClientId,
-    region: cognitoRegion, 
+    region: cognitoRegion,
     tokenProvider: 'Bearer',
     tokenUse: 'access',
     userPoolId: cognitoUserPoolId,
@@ -123,8 +124,8 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   server.log.info({ env: appConfig.nodeEnv, logLevel: appConfig.logLevel }, 'Initializing server');
 
   const container = createContainer(logger);
-  await container.initialize(); 
-  const classifier = new Classifier(logger);
+  await container.initialize();
+  const classifier = new Classifier(logger, linguaCompressor);
   // PRE-WARM CONNECTIONS
   const redisCache = new RedisCache(logger);
   await redisCache.connect(); // Connect once at startup
@@ -188,7 +189,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   }, async (request, reply) => {
     const startTime = Date.now();
     const { sessionId, message, subject, level } = request.body;
-    
+
     try {
       server.log.info(
         {
@@ -226,16 +227,16 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
     } catch (error) {
       const duration = Date.now() - startTime;
       server.log.error(
-        { 
+        {
           endpoint: '/chat',
           sessionId,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
           duration,
-        }, 
+        },
         'Chat request failed'
       );
-      
+
       reply.status(500);
       return {
         error: 'Internal server error',
@@ -296,18 +297,18 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
             reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
           },
           onMetadata: (metadata: any) => {
-            server.log.debug({ 
+            server.log.debug({
               endpoint: '/chat/stream',
               sessionId,
-              metadata 
+              metadata
             }, 'Metadata sent to client');
             reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
           },
           onComplete: (result) => {
             const duration = Date.now() - startTime;
-            
-            reply.raw.write(`data: ${JSON.stringify({ 
-              type: 'complete', 
+
+            reply.raw.write(`data: ${JSON.stringify({
+              type: 'complete',
               content: {
                 success: true,
                 data: {
@@ -338,24 +339,24 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
           },
           onError: (error) => {
             const duration = Date.now() - startTime;
-            
-            server.log.error({ 
+
+            server.log.error({
               endpoint: '/chat/stream',
               sessionId,
               error: error.message,
               stack: error.stack,
               duration,
             }, 'Streaming chat failed');
-            
-            reply.raw.write(`data: ${JSON.stringify({ 
-              type: 'error', 
+
+            reply.raw.write(`data: ${JSON.stringify({
+              type: 'error',
               content: {
                 success: false,
                 error: 'Streaming chat failed',
                 message: error.message,
               }
             })}\n\n`);
-            
+
             reply.raw.end();
           },
         },
@@ -363,15 +364,15 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
       );
     } catch (error) {
       const duration = Date.now() - startTime;
-      
-      server.log.error({ 
+
+      server.log.error({
         endpoint: '/chat/stream',
         sessionId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         duration,
       }, 'Streaming chat setup failed');
-      
+
       if (!reply.sent) {
         reply.status(500);
         return {
@@ -460,7 +461,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
         'Transfer-Encoding': 'chunked',
-        'X-Accel-Buffering': 'no',         
+        'X-Accel-Buffering': 'no',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Cache-Control, Content-Type',
       });
@@ -479,18 +480,18 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
             reply.raw.write(`data: ${JSON.stringify({ type: 'token', content: token })}\n\n`);
           },
           onMetadata: (metadata: any) => {
-            server.log.debug({ 
+            server.log.debug({
               endpoint: '/evaluate/stream',
               sessionId,
-              metadata 
+              metadata
             }, 'Metadata sent to client');
             reply.raw.write(`data: ${JSON.stringify({ type: 'metadata', content: metadata })}\n\n`);
           },
           onComplete: (result) => {
             const duration = Date.now() - startTime;
-            
-            reply.raw.write(`data: ${JSON.stringify({ 
-              type: 'complete', 
+
+            reply.raw.write(`data: ${JSON.stringify({
+              type: 'complete',
               content: {
                 success: true,
                 data: {
@@ -523,24 +524,24 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
           },
           onError: (error) => {
             const duration = Date.now() - startTime;
-            
-            server.log.error({ 
+
+            server.log.error({
               endpoint: '/evaluate/stream',
               sessionId,
               error: error.message,
               stack: error.stack,
               duration,
             }, 'Streaming evaluation failed');
-            
-            reply.raw.write(`data: ${JSON.stringify({ 
-              type: 'error', 
+
+            reply.raw.write(`data: ${JSON.stringify({
+              type: 'error',
               content: {
                 success: false,
                 error: 'Streaming evaluation failed',
                 message: error.message,
               }
             })}\n\n`);
-            
+
             reply.raw.end();
           },
         },
@@ -548,15 +549,15 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
       );
     } catch (error) {
       const duration = Date.now() - startTime;
-      
-      server.log.error({ 
+
+      server.log.error({
         endpoint: '/evaluate/stream',
         sessionId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         duration,
       }, 'Streaming setup failed');
-      
+
       if (!reply.sent) {
         reply.status(500);
         return {
@@ -679,7 +680,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   //     };
   //   } catch (error) {
   //     const duration = Date.now() - startTime;
-      
+
   //     server.log.error({ 
   //       endpoint: '/evaluate',
   //       sessionId,
@@ -687,7 +688,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
   //       stack: error instanceof Error ? error.stack : undefined,
   //       duration,
   //     }, 'Evaluation failed');
-      
+
   //     reply.status(500);
   //     return {
   //       success: false,
@@ -851,7 +852,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
         };
       }
     }
-  );  
+  );
 
   server.get<{ Params: { slideId: string } }>(
     '/presentations/:slideId',
@@ -902,7 +903,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
 
     try {
       server.log.info(
-        { 
+        {
           endpoint: '/classify',
           queryPreview: query.substring(0, 100),
           queryLength: query.length,
@@ -939,18 +940,18 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      
-      server.log.error({ 
+
+      server.log.error({
         endpoint: '/classify',
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         duration,
       }, 'Classification failed');
-      
+
       reply.status(500);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'unknown' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'unknown'
       };
     }
   });
@@ -969,13 +970,13 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
     const { documents, query, topK } = request.body;
 
     if (!documents || documents.length === 0) {
-    server.log.warn({ endpoint: '/rerank' }, 'No documents to rerank');
-    reply.status(400);
-    return { 
-      error: 'No documents provided for reranking',
-      success: false 
-    };
-  }
+      server.log.warn({ endpoint: '/rerank' }, 'No documents to rerank');
+      reply.status(400);
+      return {
+        error: 'No documents provided for reranking',
+        success: false
+      };
+    }
 
     if (!query || query.trim() === '') {
       server.log.warn({ endpoint: '/rerank' }, 'Empty query received');
@@ -985,7 +986,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
 
     try {
       server.log.info(
-        { 
+        {
           endpoint: '/rerank',
           docCount: documents.length,
           queryPreview: query.substring(0, 50),
@@ -1001,7 +1002,7 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
       const duration = Date.now() - startTime;
 
       server.log.info(
-        { 
+        {
           endpoint: '/rerank',
           originalCount: documents.length,
           rerankedCount: rerankedResults.length,
@@ -1028,25 +1029,25 @@ process.env.AWS_NODEJS_CONNECTION_REUSE_ENABLED = '1';
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      
-      server.log.error({ 
+
+      server.log.error({
         endpoint: '/rerank',
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         duration,
       }, 'Reranking failed');
-      
+
       reply.status(500);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'unknown' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'unknown'
       };
     }
   });
 
   const gracefulShutdown = async () => {
     server.log.info({ signal: 'SIGTERM/SIGINT' }, 'Shutdown signal received');
-    
+
     try {
       await server.close();
       server.log.info('Server closed gracefully');
@@ -1072,7 +1073,7 @@ async function startServer() {
       host: '0.0.0.0',
     });
 
-    server.log.info({ 
+    server.log.info({
       port: appConfig.port,
       host: '0.0.0.0',
       env: appConfig.nodeEnv,
@@ -1082,7 +1083,7 @@ async function startServer() {
     return server;
   } catch (error) {
     const logger = pino({ level: 'error' });
-    logger.error({ 
+    logger.error({
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     }, 'Failed to start server');
@@ -1109,5 +1110,5 @@ declare module 'fastify' {
       awsAccessKeyId: string;
       awsSecretAccessKey: string;
     };
-    }
+  }
 }

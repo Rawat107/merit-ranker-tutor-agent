@@ -11,6 +11,8 @@ import { loadAllSecrets } from './secrets.js';
 import { PresentationOutlineChain } from '../presentation/outlineChain.js';
 import { PresentationContentChain } from '../presentation/contentChain.js';
 import { RedisCache } from '../cache/RedisCache.js';
+import { linguaCompressor } from '../types/index.js';
+
 
 export function createContainer(logger: pino.Logger) {
   let secrets: any = null;
@@ -31,6 +33,10 @@ export function createContainer(logger: pino.Logger) {
 
       await redisClient.connect();
       logger.info('✅ Redis client connected');
+
+      // Initialize the compressor
+      await linguaCompressor.init();
+      logger.info('✅ LinguaCompressor initialized');
     },
 
     // Build Tutor Chain dependencies
@@ -38,10 +44,12 @@ export function createContainer(logger: pino.Logger) {
       if (!secrets || !redisClient) throw new Error('Call initialize() first');
 
       const modelSelector = new ModelSelector(logger);
-      const classifier = new Classifier(logger, undefined);
+      const classifier = new Classifier(logger, linguaCompressor, undefined);
       const retriever = new AWSKnowledgeBaseRetriever(logger);
       const reranker = new Reranker(logger, secrets.cohereApiKey);
+
       const evaluatePrompt = new EvaluatePrompt(modelSelector, logger);
+
       const chatMemory = new ChatMemory(redisClient, logger);
 
       return createTutorChain(
@@ -62,13 +70,13 @@ export function createContainer(logger: pino.Logger) {
       if (!secrets || !redisClient) throw new Error('Call initialize() first');
 
       const redisCache = new RedisCache(logger);
-      
+
       const outlineChain = new PresentationOutlineChain(
         redisCache,
         logger,
         secrets.tavilyApiKey
       );
-      
+
       const contentChain = new PresentationContentChain(
         logger,
       );

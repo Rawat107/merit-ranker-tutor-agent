@@ -48,12 +48,12 @@ export const tutorConfigData: TutorConfig = {
     "outputFormat": "json"
   },
   "imageGenerator": {
-  "modelId": "amazon.titan-image-generator-v1",
-  "systemPrompt": "You are an image generator. Generate high-quality images based on detailed prompts.",
-  "maxTokens": 256,
-  "temperature": 0.8,
-  "outputFormat": "base64_image",
-  "region": "ap-south-1"
+    "modelId": "amazon.titan-image-generator-v1",
+    "systemPrompt": "You are an image generator. Generate high-quality images based on detailed prompts.",
+    "maxTokens": 256,
+    "temperature": 0.8,
+    "outputFormat": "base64_image",
+    "region": "ap-south-1"
   },
   "subjects": {
     "general": {
@@ -165,36 +165,36 @@ export const appConfig = {
   port: parseInt(process.env.PORT || '3000'),
   logLevel: process.env.LOG_LEVEL || 'info',
   nodeEnv: process.env.NODE_ENV || 'development',
-  
+
   // AWS Configuration
   aws: {
     region: process.env.AWS_REGION || 'ap-south-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
-  
+
   // Model Configuration
   defaultModelId: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-sonnet-20240229-v1:0',
   embeddingModelId: process.env.EMBED_MODEL_ID || 'amazon.titan-embed-text-v1',
-  
+
   // Cache Configuration
   cache: {
     serveSimilarity: parseFloat(process.env.CACHE_SERVE_SIMILARITY || '0.94'),
     softSimilarity: parseFloat(process.env.CACHE_SOFT_SIMILARITY || '0.82'),
     ttl: parseInt(process.env.CACHE_TTL || '86400'),
   },
-  
+
   // External Services
   upstash: {
     url: process.env.UPSTASH_URL,
     token: process.env.UPSTASH_TOKEN,
   },
-  
+
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
     password: process.env.REDIS_PASSWORD,
   },
-  
+
   serpapi: {
     key: process.env.SERPAPI_KEY,
   }
@@ -244,7 +244,7 @@ export const classificationConfig = {
         'preposition', 'interjection', 'syntax', 'spelling', 'capitalization',
         'gerund', 'participle', 'infinitive', 'modal', 'passive', 'active'
       ],
-      symbols: [] 
+      symbols: []
     },
     history: {
       keywords: [
@@ -359,19 +359,19 @@ export const classificationConfig = {
       // Formal/rigorous keywords
       'prove', 'proof', 'theorem', 'derivation', 'derive', 'rigorous',
       'formalize', 'formal', 'axiom', 'lemma', 'corollary',
-      
+
       // Research/academic keywords
       'complex analysis', 'advanced', 'research', 'dissertation',
       'sophisticated', 'intricate', 'elaborate', 'comprehensive study',
-      
+
       // Mathematical complexity
       'infinitely', 'infinite', 'convergence', 'divergence', 'asymptotic',
       'characterize', 'generalize', 'abstract', 'canonical',
-      
+
       // Logic & reasoning
       'formalize', 'characterize', 'minimal', 'necessary and sufficient',
       'if and only if', 'iff', 'contrapositive', 'contradiction',
-      
+
       // Complexity indicators
       'multiple constraints', 'optimize', 'minimize', 'maximize',
       'given arbitrary', 'for all', 'there exists', 'such that'
@@ -435,17 +435,17 @@ export class ModelConfigService {
    */
   getModelConfig(classification: Classification, userSubscription: string = 'free'): ModelConfig {
     const { subject, level } = classification;
-    
+
     // Get subject-specific config, fallback to general
     const subjectConfig = this.tutorConfig.subjects[subject] || this.tutorConfig.subjects.general;
-    
+
     // Get level-specific config, fallback to basic
     const levelConfig = subjectConfig[level] || subjectConfig.basic;
-    
+
     // Apply subscription plan multiplier
     const plan = this.tutorConfig.plans[userSubscription] || this.tutorConfig.plans[this.tutorConfig.defaultSubscription];
     const adjustedMaxTokens = Math.floor(levelConfig.maxTokens * plan.maxTokensMultiplier);
-    
+
     return {
       ...levelConfig,
       maxTokens: adjustedMaxTokens,
@@ -510,7 +510,7 @@ export class ModelConfigService {
       ...imageGen,
       region: imageGen.region ?? 'ap-south-1'
     };
-}
+  }
 }
 
 export const modelConfigService = new ModelConfigService();
