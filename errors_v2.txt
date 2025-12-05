@@ -1,6 +1,0 @@
-src/educator/agent/educatorAgent.ts(595,26): error TS2345: Argument of type '"classify"' is not assignable to parameter of type '"__start__" | "__end__"'.
-src/educator/agent/educatorAgent.ts(596,19): error TS2345: Argument of type '"classify"' is not assignable to parameter of type '"__start__" | "__start__"[]'.
-src/educator/agent/educatorAgent.ts(597,19): error TS2345: Argument of type '"research"' is not assignable to parameter of type '"__start__" | "__start__"[]'.
-src/educator/agent/educatorAgent.ts(598,19): error TS2345: Argument of type '"generate"' is not assignable to parameter of type '"__start__" | "__start__"[]'.
-src/educator/agent/educatorAgent.ts(601,31): error TS2345: Argument of type '"validate"' is not assignable to parameter of type '"__start__"'.
-src/educator/agent/educatorAgent.ts(610,19): error TS2345: Argument of type '"publish"' is not assignable to parameter of type '"__start__" | "__start__"[]'.
