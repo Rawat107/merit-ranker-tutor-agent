@@ -158,8 +158,19 @@ export const tutorConfigData: TutorConfig = {
       "intermediate": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1200, "temperature": 0.1, "systemPrompt": "You are a historian. Provide sourced explanations and context.", "outputFormat": "Answer + citations" },
       "advanced": { "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "maxTokens": 1600, "temperature": 0.0, "systemPrompt": "You are an expert historian. Provide deep contextual analysis and sources.", "outputFormat": "Deep analysis + sources" }
     }
-  }
+  },
+  "prompt_refinement": {
+    "intermediate": {
+      "modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "maxTokens": 3000,
+      "temperature": 0.2,
+      "systemPrompt": "You are a prompt refinement assistant. Improve and clarify user prompts for better LLM responses.",
+      "outputFormat": "Refined prompt"
+    }
+}
 };
+
+
 
 export const appConfig = {
   port: parseInt(process.env.PORT || '3000'),
@@ -350,6 +361,8 @@ export const classificationConfig = {
       'improve email for work', 'business email', 'formal email'
     ]
   },
+
+
 
   /**
    * Level detection indicators

@@ -58,6 +58,96 @@ The JSON must have these fields: subject, level, confidence, reasoning (optional
 Example response: {{"subject": "math", "level": "intermediate", "confidence": 0.9, "intent": "step_by_step_explanation", "expectedFormat": "Numbered steps with LaTeX formulas and verification", "reasoning": "Trigonometry problem asking for solution steps"}}`;
 }
 
+
+export function buildHindiResponseWrapper(systemPrompt: string): string {
+  return `${systemPrompt}
+
+IMPORTANT: User prefers responses in HINDI (हिंदी). 
+Please respond in Hindi/Hinglish format.
+Use simple Hindi mixed with English technical terms where needed.
+Example: "यह quadratic equation है जिसका solution x = 2 है।"`;
+}
+
+
+export function buildMCQGenerationPrompt(
+  topic: string,
+  count: number = 10,
+  difficulty: 'basic' | 'intermediate' | 'advanced' = 'intermediate',
+  subject: string = 'general'
+): string {
+  return `You are an expert question paper setter for ${subject}.
+
+Create exactly ${count} Multiple Choice Questions on the topic: "${topic}"
+
+Difficulty Level: ${difficulty.toUpperCase()}
+
+For each MCQ, follow this format:
+
+Q1. [Question text]
+A) Option 1
+B) Option 2
+C) Option 3 (Correct)
+D) Option 4
+
+[Explanation]: [Why C is correct, why others are wrong]
+
+---
+
+Requirements:
+- Questions must be clear and unambiguous
+- Options should be plausible but clearly different
+- Include mix of conceptual, calculation, and application questions
+- Mark correct answer with (Correct) tag
+- Provide brief explanation after each question
+- Ensure all questions are unique
+
+Generate ${count} questions following this format exactly.`;
+}
+
+export function buildNoteGenerationPrompt(
+  topic: string,
+  sourceText?: string,
+  includeExamples: boolean = true
+): string {
+  return `You are an expert study note creator for government exam preparation (SSC, Banking, Railways).
+
+Topic: ${topic}
+${sourceText ? `Reference: ${sourceText.substring(0, 500)}` : ''}
+
+Create comprehensive study notes with the following structure:
+
+## Key Concepts
+[Define 2-3 main concepts related to ${topic}]
+
+## Definition
+[Clear, exam-friendly definition]
+
+## Key Points
+- Point 1
+- Point 2
+- Point 3
+- Point 4
+
+## Formula/Important Facts
+[List relevant formulas or facts]
+${includeExamples ? `
+## Examples
+[Provide 2-3 worked examples]
+
+## Common Mistakes
+[List 2-3 common student mistakes]
+
+## Quick Revision
+[One-liner summary]` : ''}
+
+## Related Topics
+[List 2-3 related topics students should learn]
+
+Format: Make notes exam-focused, concise, and easy to remember.
+Use bullet points where appropriate.
+Include mnemonics if applicable.`;
+}
+
 /**
  * Build enhanced prompt template with LangChain
  * Includes: converted query + reranker top 1 result (shot) + intent + response structure
@@ -96,6 +186,80 @@ export function buildEnhancedPrompt(
   ]);
 }
 
+
+export function buildMockTestPrompt(
+  subject: string,
+  topics: string[],
+  questionCount: number = 20,
+  duration: number = 60 // minutes
+): string {
+  return `Create a mock test for ${subject} exam preparation.
+
+  Topics Covered: ${topics.join(', ')}
+  Total Questions: ${questionCount}
+  Suggested Duration: ${duration} minutes
+
+  Structure:
+  - ${Math.floor(questionCount * 0.5)} MCQ (1 mark each)
+  - ${Math.floor(questionCount * 0.3)} Short Answer (2 marks)
+  - ${Math.floor(questionCount * 0.2)} Long Answer (3 marks)
+
+  For each question:
+  Q1. [Question text]
+  [Type: MCQ/Short Answer/Long Answer]
+  [Category: Topic name]
+  [Marks: X]
+  ${true ? `[Answer Key with explanation]` : ''}
+
+  Instructions:
+  - Mix easy, medium, and difficult questions
+  - Ensure good coverage of all topics
+  - Avoid duplicate concepts
+  - Make questions exam-relevant
+  - Include previous year question style
+  - Ensure all questions are unique
+
+  Generate the complete mock test in structured format.`;
+}
+
+export function buildQuizEvaluationPrompt(
+  question: string,
+  studentAnswer: string,
+  correctAnswer: string,
+  subject: string = 'general'
+): string {
+  return `You are an expert exam evaluator for ${subject}.
+
+  Evaluate this student's answer:
+
+  QUESTION: ${question}
+
+  STUDENT'S ANSWER: ${studentAnswer}
+
+  CORRECT ANSWER: ${correctAnswer}
+
+  Provide evaluation in this format:
+
+  ## Marks: X/Y
+  [Give partial marks if answer is partially correct]
+
+  ## Analysis:
+  - What the student got right
+  - What the student missed
+  - Common mistake (if any)
+
+  ## Correct Explanation:
+  [Clear explanation of why this is the correct answer]
+
+  ## Learning Points:
+  [2-3 key learnings for the student]
+
+  ## Tips for Similar Questions:
+  [Specific strategy for answering similar questions]
+
+  Be encouraging but constructive.`;
+}
+
 /**
  * Build intent-specific response guidance
  */
@@ -125,36 +289,43 @@ export function buildEvaluationPrompt(
   classification: Classification,
   topDocument: Document | null,
   intent: string,
-  userPrefs?: Record<string, any>,
+  userPrefs?: Record<string, string>,
   conversationHistory?: string,
   userName?: string | null
-): { systemPrompt: string; conversationHistory: string; referenceAndQuery: string } {
+): {
+  systemPrompt: string;
+  conversationHistory: string;
+  reference: string;
+  currentQuery: string;
+} {
 
-  const shotExample = topDocument
+  // ✅ REFERENCE ONLY - will be compressed
+  const referenceBlock = topDocument
     ? (() => {
       const url = (topDocument.metadata && (topDocument.metadata as any).url) || '';
       const title = (topDocument.metadata && (topDocument.metadata as any).title) || topDocument.id;
       const linkPart = url ? ` (Link: ${url})` : '';
       const header = `\n[REFERENCE MATERIAL]\nSource: ${title}${linkPart}\n`;
-      const body = `${(topDocument.text || '').substring(0, 240)}\n`;
+      const body = `${topDocument.text || ''}\n`;
       return header + body;
     })()
     : '';
 
   const responseFormat = getResponseFormatByIntent(intent);
+
   const prefsBlock = userPrefs
     ? `Language: ${userPrefs.language} | Exam: ${userPrefs.exam} | Style: ${userPrefs.tutorStyle}\n`
     : '';
 
-  // Build the system message with natural instructions
   const greetingInstruction = userName
     ? `The user's name is ${userName}. Greet them naturally by name when appropriate and maintain consistency with previous conversations.`
     : 'If the user introduces themselves or mentions their name in the conversation history, greet them naturally and remember it throughout the conversation.';
 
   const systemPrompt = `You are a professional educator for government exams in India. You are specializing in ${classification.subject}. Your role is to help students prepare for these exams by providing clear, accurate, and actionable answers, and by guiding them to think about what to ask next.
-Difficulty Level: ${classification.level.toUpperCase()}
-${prefsBlock}
 
+Difficulty Level: ${classification.level.toUpperCase()}
+
+${prefsBlock}
 CONVERSATION GUIDELINES:
 - ${greetingInstruction}
 - Reference previous messages when relevant to maintain context and continuity
@@ -169,24 +340,21 @@ ${responseFormat}
 
 CRITICAL: Always follow the response format above. Make your answer clear, accurate, and actionable.
 
-After your main answer, suggest ONE relevant next question the student could ask to continue learning. Format this as:
-Suggested Next Question: <your suggested question here>`;
+After your main answer, suggest ONE relevant next question the student could ask to continue learning.`;
 
-  // Build conversation history block (will be compressed separately)
+  //  CONVERSATION HISTORY - will be compressed
   const historyBlock = conversationHistory
     ? `\n[CONVERSATION HISTORY]\n${conversationHistory}\n`
     : '';
 
-  // Build reference and query block (will NOT be compressed)
-  const referenceAndQuery = `Current User Query: ${userQuery}${shotExample}
+  //  CURRENT QUERY - will NOT be compressed
+  const currentQueryBlock = `\n[CURRENT QUERY]\n${userQuery}\n\nProvide your response in the format specified above, using the conversation history and reference material as needed. Remember to include a single suggested next question at the end.`;
 
-Provide your response in the format specified above, using the conversation history and reference material as needed. Remember to include a single suggested next question at the end.`;
-
-  // Return as 3 separate parts for selective compression
   return {
     systemPrompt,
     conversationHistory: historyBlock,
-    referenceAndQuery
+    reference: referenceBlock,
+    currentQuery: currentQueryBlock
   };
 }
 
@@ -279,7 +447,30 @@ function getResponseFormatByIntent(intent: string): string {
     'proofread': `
 - **Corrected Text:** [Provide the text with grammar, spelling, and punctuation fixed]`,
     'make_email_professional': `
-- **Professional Email:** [Provide a professionally rewritten version of the email]`
+- **Professional Email:** [Provide a professionally rewritten version of the email]`,
+
+    'mcq_generation': `
+  - Begin with "MCQ Questions:"
+  - Format each as: Q1. [Question], A) [opt], B) [opt], C) [opt], D) [opt]
+  - Mark correct answer
+  - End with explanation for each`,
+
+    'note_generation': `
+  - Begin with "## Key Concepts"
+  - Structure: Definition → Key Points → Examples → Revision
+  - Use bullet points and numbers
+  - Keep notes concise and exam-focused`,
+
+    'mock_test_generation': `
+  - Begin with "Mock Test - [Subject]"
+  - Include MCQ + Short Answer + Long Answer mix
+  - Provide marks for each question
+  - Include answer keys with brief explanations`,
+
+    'quiz_evaluation': `
+  - Begin with "Evaluation Report"
+  - Provide: Marks, Analysis, Correct Explanation, Learning Points
+  - Be constructive and encouraging`
   };
 
   return formats[intent] || formats['factual_retrieval'];
@@ -375,4 +566,144 @@ Return JSON with:
   "content": "markdown content here with ## headings and bullet points",
   "imageSearchQuery": "specific search query for Unsplash (2-4 words)"
 }`;
+}
+
+
+
+export function buildBlueprintGenerationPrompt(
+  userQuery: string,
+  classification: any
+): string {
+  return `You are an intelligent blueprint architect for question generation.
+
+Given a user query and its classification, create a structured plan for generating questions.
+
+USER QUERY: "${userQuery}"
+
+CLASSIFICATION:
+- Subject: ${classification.subject}
+- Level: ${classification.level}
+- Intent: ${(classification as any).intent || 'mcq_generation'}
+- Confidence: ${classification.confidence}
+
+YOUR TASK:
+Create a JSON response that specifies:
+1. Total questions needed (extract from query or use reasonable default)
+2. Number of batches (calculate: totalQuestions / 3, round up)
+3. Topics to cover (diverse, relevant subtopics for the subject - NOT limited to predefined lists)
+4. Pipeline nodes (always: ["research", "topic_batch_creation", "generate", "validate"])
+5. Generation strategy (batchSize: 3-4, concurrency: 5, retryLimit: 3)
+
+GUIDELINES:
+- For math subjects: Include theoretical foundations, applications, and problem-solving
+- For science subjects: Include conceptual understanding, real-world examples, and practical applications
+- For humanities: Include historical context, cultural significance, and comparative analysis
+- For reasoning: Include logical thinking, pattern analysis, and creative problem-solving
+- For general knowledge: Include diverse domains, current topics, and interdisciplinary connections
+
+EXAMPLE RESPONSE FORMAT:
+{
+  "totalQuestions": 20,
+  "numberOfBatches": 5,
+  "topics": [
+    {
+      "topicName": "Advanced Concepts",
+      "description": "Focus on advanced aspects with practical examples",
+      "difficulty": "intermediate",
+      "questionCount": 3,
+      "priority": "high"
+    },
+    {
+      "topicName": "Foundational Knowledge",
+      "description": "Cover core concepts and fundamentals",
+      "difficulty": "intermediate",
+      "questionCount": 3,
+      "priority": "high"
+    }
+  ],
+  "pipelineNodes": ["research", "topic_batch_creation", "generate", "validate"],
+  "generationStrategy": {
+    "batchSize": 3,
+    "concurrency": 5,
+    "retryLimit": 3
+  }
+}
+
+RULES:
+- Extract question count from query (look for numbers + "questions", "MCQs", etc)
+- Default to 10 if no number found
+- Distribute questions evenly across 5-7 diverse topics (2-3 questions per topic)
+- Reduce batchSize to 3-4 for better question diversity per batch
+- Set first topic priority to "high", rest to "medium" or "low"
+- Topics should be SPECIFIC and DIVERSE - not generic categories
+- Think creatively about subtopics relevant to the query
+
+Respond with ONLY the JSON object, no markdown formatting, no explanations.`;
+}
+
+export function buildPromptRefinementPrompt(
+  userQuery: string,
+  blueprintTopics: Array<{
+    topicName: string;
+    description: string;
+    difficulty: 'basic' | 'intermediate' | 'advanced';
+    questionCount: number;
+    priority: 'high' | 'medium' | 'low';
+  }>,
+  webSearchResults: Array<{ text: string; url?: string }>,
+  awsKbResults: Array<{ text: string; source?: string }>,
+  subject: string,
+  level: 'basic' | 'intermediate' | 'advanced'
+): string {
+  const webContext = webSearchResults.map((r, i) => `[Web ${i + 1}]: ${r.text}`).join('\n\n');
+  const kbContext = awsKbResults.map((r, i) => `[KB ${i + 1}]: ${r.text}`).join('\n\n');
+
+  return `You are an expert prompt engineer for creating question generation prompts.
+
+USER QUERY: "${userQuery}"
+
+SUBJECT: ${subject}
+LEVEL: ${level.toUpperCase()}
+
+BLUEPRINT TOPICS TO COVER:
+${blueprintTopics.map((t, i) => `${i + 1}. ${t.topicName} (${t.questionCount} questions, priority: ${t.priority})`).join('\n')}
+
+RESEARCH CONTEXT - WEB SEARCH (4 results):
+${webContext}
+
+RESEARCH CONTEXT - AWS KNOWLEDGE BASE (4 results):
+${kbContext}
+
+YOUR TASK:
+Create an array of refined prompts - ONE PROMPT PER BLUEPRINT TOPIC.
+
+Each prompt must:
+1. Reference the specific topic
+2. Include only the MOST RELEVANT research details from above
+3. Specify the number of questions needed
+4. Include difficulty level
+5. Be optimized for LLM generation
+
+OUTPUT FORMAT - RETURN VALID JSON ARRAY ONLY:
+[
+  {
+    "topicName": "Topic Name",
+    "questionCount": 5,
+    "difficulty": "intermediate",
+    "prompt": "Detailed prompt for generating questions on this topic with embedded research context...",
+    "researchSources": ["Web 1", "KB 2"],
+    "keywords": ["keyword1", "keyword2"]
+  },
+  // ... one object per blueprint topic
+]
+
+RULES:
+- Each prompt object must have ALL fields above
+- Prompts should be concise but informative
+- Include specific research details (facts, concepts) from web/KB
+- Mark which research sources are used (e.g., "Web 1", "KB 2")
+- Topics in output must match blueprint topics exactly
+- Return ONLY valid JSON, no markdown, no explanations
+
+Respond with ONLY the JSON array.`;
 }

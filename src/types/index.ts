@@ -70,6 +70,8 @@ export interface TutorConfig {
   reranker: ModelConfig & { modelId: string };
   imageGenerator: ModelConfig & { modelId: string; region?: string };
   subjects: Record<string, Record<string, ModelConfig>>;
+  prompt_refinement?: Record<string, ModelConfig & { modelId: string }>;
+
 }
 
 export interface ChatRequest {

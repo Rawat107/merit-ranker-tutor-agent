@@ -16,6 +16,17 @@ import { PresentationOutlineChain } from './presentation/outlineChain.js';
 import { PresentationContentChain } from './presentation/contentChain.js';
 import { SlideOutlineRequest } from './types/index.js';
 import { linguaCompressor } from './compression/lingua_compressor.js';
+import {
+  educatorStreamHandler,
+  educatorLangGraphHandler,
+  generateQuizHandler,
+  generateNotesHandler,
+  generateMockTestHandler,
+  getGraphVisualizationHandler,
+  getContentHandler,
+  updateContentHandler,
+  deleteContentHandler,
+} from './educator/handlers/educatorHandler.js';
 
 
 export async function createServer(): Promise<FastifyInstance> {
@@ -885,6 +896,207 @@ export async function createServer(): Promise<FastifyInstance> {
   );
 
 
+
+  /**
+   * POST /api/educator/generate-stream
+   * Streaming endpoint with real-time status updates (SSE)
+   */
+  server.post<{ Body: { query: string; userId?: string } }>(
+    '/api/educator/generate-stream',
+    // { onRequest: server.auth.require() }, // Commented for testing - uncomment for production
+    educatorStreamHandler
+  );
+
+  /**
+   * POST /api/educator/generate
+   * Non-streaming endpoint (JSON response)
+   */
+  server.post<{ Body: { query: string; userId?: string } }>(
+    '/api/educator/generate',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        body: {
+          type: 'object',
+          required: ['query'],
+          properties: {
+            query: { type: 'string' },
+            userId: { type: 'string' },
+          },
+        },
+      },
+    },
+    educatorLangGraphHandler
+  );
+
+  /**
+   * POST /api/educator/quiz
+   * Backward compatible quiz generation endpoint
+   */
+  server.post<{ Body: { subject: string; topic: string; difficulty?: string; count?: number } }>(
+    '/api/educator/quiz',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        body: {
+          type: 'object',
+          required: ['subject', 'topic'],
+          properties: {
+            subject: { type: 'string' },
+            topic: { type: 'string' },
+            difficulty: { type: 'string' },
+            count: { type: 'number' },
+          },
+        },
+      },
+    },
+    generateQuizHandler
+  );
+
+  /**
+   * POST /api/educator/notes
+   * Backward compatible notes generation endpoint
+   */
+  server.post<{ Body: { subject: string; topic: string; difficulty?: string; includeExamples?: boolean } }>(
+    '/api/educator/notes',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        body: {
+          type: 'object',
+          required: ['subject', 'topic'],
+          properties: {
+            subject: { type: 'string' },
+            topic: { type: 'string' },
+            difficulty: { type: 'string' },
+            includeExamples: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    generateNotesHandler
+  );
+
+  /**
+   * POST /api/educator/mock-test
+   * Backward compatible mock test generation endpoint
+   */
+  server.post<{ Body: { subject: string; topic: string; difficulty?: string; count?: number; duration?: number } }>(
+    '/api/educator/mock-test',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        body: {
+          type: 'object',
+          required: ['subject', 'topic'],
+          properties: {
+            subject: { type: 'string' },
+            topic: { type: 'string' },
+            difficulty: { type: 'string' },
+            count: { type: 'number' },
+            duration: { type: 'number' },
+          },
+        },
+      },
+    },
+    generateMockTestHandler
+  );
+
+  /**
+   * GET /api/educator/graph
+   * Get LangGraph visualization for debugging
+   */
+  server.get(
+    '/api/educator/graph',
+    // { onRequest: server.auth.require() }, // Commented for testing - uncomment for production
+    getGraphVisualizationHandler
+  );
+
+  /**
+   * GET /api/educator/content/:contentId
+   * Get content by ID
+   */
+  server.get<{ Params: { contentId: string } }>(
+    '/api/educator/content/:contentId',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        params: {
+          type: 'object',
+          required: ['contentId'],
+          properties: {
+            contentId: { type: 'string' },
+          },
+        },
+      },
+    },
+    getContentHandler
+  );
+
+  /**
+   * PUT /api/educator/content/:contentId
+   * Update content
+   */
+  server.put<{ Params: { contentId: string }; Body: { updates: any } }>(
+    '/api/educator/content/:contentId',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        params: {
+          type: 'object',
+          required: ['contentId'],
+          properties: {
+            contentId: { type: 'string' },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['updates'],
+          properties: {
+            updates: { type: 'object' },
+          },
+        },
+      },
+    },
+    updateContentHandler
+  );
+
+  /**
+   * DELETE /api/educator/content/:contentId
+   * Delete content
+   */
+  server.delete<{ Params: { contentId: string } }>(
+    '/api/educator/content/:contentId',
+    {
+      // onRequest: server.auth.require(), // Commented for testing - uncomment for production
+      schema: {
+        params: {
+          type: 'object',
+          required: ['contentId'],
+          properties: {
+            contentId: { type: 'string' },
+          },
+        },
+      },
+    },
+    deleteContentHandler
+  );
+
+  /**
+   * GET /api/educator/dashboard
+   * Serve educator dashboard UI
+   */
+  server.get(
+    '/api/educator/dashboard',
+    // { onRequest: server.auth.require() }, // Commented for testing - uncomment for production
+    async (request, reply) => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const htmlPath = path.join(process.cwd(), 'src', 'frontend', 'educatorDashboard.html');
+      const html = fs.readFileSync(htmlPath, 'utf-8');
+      return reply.type('text/html').send(html);
+    }
+  );
 
   server.post<{ Body: { query: string } }>('/classify', {
     onRequest: server.auth.require(),

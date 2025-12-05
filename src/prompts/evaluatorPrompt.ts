@@ -1,24 +1,25 @@
-import { ILLM } from '../llm/ILLM.js';
 import { ModelSelector } from '../llm/ModelSelector.js';
 import { createTierLLM } from '../llm/tierLLM.js';
-import { Classification, Document, LLMOptions, BaseMessage } from '../types/index.js';
-import { buildEvaluationPrompt } from '../utils/promptTemplates.js';
+import { Classification, Document } from '../types/index.js';
+import {
+  buildEvaluationPrompt,
+  buildMCQGenerationPrompt,
+  buildNoteGenerationPrompt,
+  buildMockTestPrompt,
+  buildQuizEvaluationPrompt,
+  buildHindiResponseWrapper
+} from '../utils/promptTemplates.js';
 import { modelConfigService } from '../config/modelConfig.js';
 import { linguaCompressor } from '../compression/lingua_compressor.js';
 import pino from 'pino';
 
-/**
- * Get status message based on tier and subject
- */
 function getStatusMessage(tier: 'basic' | 'intermediate' | 'advanced', subject: string): string {
-  // Tier-based thinking messages
   const thinkingMessages = {
     basic: 'Thinking...',
     intermediate: 'Thinking harder...',
     advanced: 'Thinking deeply...'
   };
 
-  // Subject-specific action messages
   const subjectMessages: Record<string, string> = {
     math: 'Solving the problem...',
     reasoning: 'Working through the logic...',
@@ -26,7 +27,11 @@ function getStatusMessage(tier: 'basic' | 'intermediate' | 'advanced', subject: 
     history: 'Researching historical context...',
     english_grammar: 'Checking grammar rules...',
     general_knowledge: 'Finding information...',
-    current_affairs: 'Searching latest updates...'
+    current_affairs: 'Searching latest updates...',
+    mcq_generation: 'Creating questions...',
+    note_generation: 'Generating notes...',
+    mock_test_generation: 'Preparing test...',
+    quiz_evaluation: 'Evaluating answer...'
   };
 
   return subjectMessages[subject] || thinkingMessages[tier];
@@ -51,105 +56,151 @@ export interface EvaluatePromptOutput {
 }
 
 /**
- * Compress different parts of the prompt with different compression rates
- *
- * Strategy:
- * - System prompt: Light compression (rate=0.7 = keep 70%)
- * - Conversation history: Aggressive compression (rate=0.4 = keep 40%)
- * - Reference material: NO compression (critical info)
- * - User query: NO compression (user's actual question)
- *
- * FIX: Now receives pre-split parts from buildEvaluationPrompt()
+ * Reference compression rate: 0.5 (as requested - half the tokens)
  */
-async function compressPromptSelectively(
-  systemPrompt: string,
+async function compressContextInParallel(
   conversationHistory: string,
-  referenceAndQuery: string,
+  reference: string,
   logger: pino.Logger
-): Promise<string> {
+): Promise<{ compressedHistory: string; compressedReference: string; savedTokens: number }> {
   const startTime = Date.now();
 
   try {
     logger.debug(
       {
-        systemLength: systemPrompt.length,
         historyLength: conversationHistory.length,
-        refQueryLength: referenceAndQuery.length
+        refLength: reference.length
       },
-      '[Compression] Starting selective compression'
+      '[Compression] Starting PARALLEL context compression'
     );
 
-    // 1. Compress system prompt lightly (keep structure but remove redundancy)
-    let compressedSystem = systemPrompt;
-    if (systemPrompt.length > 300) {
-      logger.debug({ originalLength: systemPrompt.length }, '[Compression] Compressing system prompt...');
-      compressedSystem = await linguaCompressor.compress(systemPrompt, { rate: 0.7 });
-      logger.info(
-        {
-          original: systemPrompt.length,
-          compressed: compressedSystem.length,
-          saved: systemPrompt.length - compressedSystem.length,
-          ratio: ((1 - compressedSystem.length / systemPrompt.length) * 100).toFixed(1) + '%'
-        },
-        '[Compression] ✅ System prompt compressed'
-      );
-    }
+    //  Compress both in parallel - aggressive rates
+    const [compressedHistory, compressedReference] = await Promise.all([
+      // History: 25% compression rate (keep most content but compress aggressively)
+      conversationHistory.trim().length > 100
+        ? linguaCompressor.compress(conversationHistory, { rate: 0.25 })
+        : conversationHistory,
+      // Reference: 50% compression rate (keep important info)
+      reference.trim().length > 100
+        ? linguaCompressor.compress(reference, { rate: 0.5 })
+        : reference
+    ]);
 
-    // 2. Compress conversation history aggressively (biggest token consumer)
-    let compressedHistory = conversationHistory;
-    if (conversationHistory.trim().length > 0) {
-      logger.debug({ originalLength: conversationHistory.length }, '[Compression] Compressing conversation history...');
-      compressedHistory = await linguaCompressor.compress(conversationHistory, { rate: 0.25 });
-      logger.info(
-        {
-          original: conversationHistory.length,
-          compressed: compressedHistory.length,
-          saved: conversationHistory.length - compressedHistory.length,
-          ratio: ((1 - compressedHistory.length / conversationHistory.length) * 100).toFixed(1) + '%'
-        },
-        '[Compression] ✅ Conversation history compressed'
-      );
-    }
-
-    // 3. Keep reference material and user query as-is (NO compression)
-    // These are critical and must remain unchanged
-
-    // Combine all parts
-    const finalPrompt = `${compressedSystem}${compressedHistory}${referenceAndQuery}`;
+    const originalContextLength = conversationHistory.length + reference.length;
+    const compressedContextLength = compressedHistory.length + compressedReference.length;
+    const savedChars = originalContextLength - compressedContextLength;
+    const savedTokens = Math.floor(savedChars / 4);
+    const compressionRatio = (
+      ((originalContextLength - compressedContextLength) / originalContextLength) * 100
+    ).toFixed(1);
 
     const totalTime = Date.now() - startTime;
-    const originalTotal = systemPrompt.length + conversationHistory.length + referenceAndQuery.length;
-    const compressionRatio = (((originalTotal - finalPrompt.length) / originalTotal) * 100).toFixed(1);
 
     logger.info(
       {
-        originalChars: originalTotal,
-        compressedChars: finalPrompt.length,
-        savedChars: originalTotal - finalPrompt.length,
-        originalTokens: Math.floor(originalTotal / 4),
-        compressedTokens: Math.floor(finalPrompt.length / 4),
-        savedTokens: Math.floor((originalTotal - finalPrompt.length) / 4),
+        originalHistoryLength: conversationHistory.length,
+        compressedHistoryLength: compressedHistory.length,
+        originalRefLength: reference.length,
+        compressedRefLength: compressedReference.length,
+        totalOriginal: originalContextLength,
+        totalCompressed: compressedContextLength,
+        savedChars,
+        savedTokens,
         compressionRatio: `${compressionRatio}%`,
-        compressionTime: `${totalTime}ms`
+        processingTime: `${totalTime}ms`
       },
-      '[Compression] ✅✅✅ SELECTIVE COMPRESSION COMPLETE'
+      '[Compression]  PARALLEL COMPRESSION DONE (history: 25%, reference: 50%)'
     );
 
-    return finalPrompt;
+    return { compressedHistory, compressedReference, savedTokens };
   } catch (error) {
-    logger.error({ error }, '[Compression] ❌ Compression failed, using original');
-    // Fallback: return uncompressed but properly formatted
-    return `${systemPrompt}${conversationHistory}${referenceAndQuery}`;
+    logger.error({ error }, '[Compression]  Parallel compression failed, using original');
+    return {
+      compressedHistory: conversationHistory,
+      compressedReference: reference,
+      savedTokens: 0
+    };
+  }
+}
+/**
+ */
+async function compressSystemPromptIfNeeded(
+  systemPrompt: string,
+  compressedHistory: string,
+  compressedReference: string,
+  currentQuery: string,
+  logger: pino.Logger
+): Promise<string> {
+  // ✅ Calculate tokens including current query
+  const combinedContextLength =
+    compressedHistory.length + compressedReference.length + currentQuery.length;
+  const estimatedContextTokens = Math.floor(combinedContextLength / 4);
+
+  logger.debug(
+    {
+      systemPromptLength: systemPrompt.length,
+      compressedContextTokens: estimatedContextTokens,
+      historyTokens: Math.floor(compressedHistory.length / 4),
+      refTokens: Math.floor(compressedReference.length / 4),
+      queryTokens: Math.floor(currentQuery.length / 4),
+      threshold: 1000
+    },
+    '[Compression] Checking if system prompt needs compression'
+  );
+
+  // ✅ Threshold is 1000 tokens (was 1200)
+  if (estimatedContextTokens > 1000) {
+    logger.info(
+      { contextTokens: estimatedContextTokens, threshold: 1000 },
+      '[Compression] Context > 1000 tokens, compressing system prompt (LIGHT 70%)'
+    );
+
+    const startTime = Date.now();
+    const compressedSystem = await linguaCompressor.compress(systemPrompt, { rate: 0.7 });
+    const totalTime = Date.now() - startTime;
+
+    logger.info(
+      {
+        original: systemPrompt.length,
+        compressed: compressedSystem.length,
+        saved: systemPrompt.length - compressedSystem.length,
+        ratio: ((1 - compressedSystem.length / systemPrompt.length) * 100).toFixed(1) + '%',
+        processingTime: `${totalTime}ms`
+      },
+      '[Compression] ✅ System prompt compressed (LIGHT 70%)'
+    );
+
+    return compressedSystem;
+  } else {
+    logger.info(
+      { contextTokens: estimatedContextTokens, threshold: 1000 },
+      '[Compression] Context <= 1000 tokens, using ORIGINAL system prompt'
+    );
+    return systemPrompt;
   }
 }
 
 /**
- * Evaluates the final prompt using tier-specific LLMs (Basic/Intermediate/Advanced)
- *
- * Confidence-based routing:
- * - confidence > 90% + Math/Reasoning/Logic → Intermediate LLM
- * - confidence > 90% + English/General/Simple → Basic LLM
- * - confidence ≤ 90% → Advanced LLM
+ * Parse quiz evaluation input
+ */
+function parseQuizEvalInput(input: string): {
+  question: string;
+  studentAnswer: string;
+  correctAnswer: string;
+} {
+  const questionMatch = input.match(/Question:\s*([^|]+)/i);
+  const studentMatch = input.match(/Student Answer:\s*([^|]+)/i);
+  const correctMatch = input.match(/Correct Answer:\s*(.+?)$/i);
+
+  return {
+    question: questionMatch ? questionMatch[1].trim() : input.substring(0, 100),
+    studentAnswer: studentMatch ? studentMatch[1].trim() : 'Not provided',
+    correctAnswer: correctMatch ? correctMatch[1].trim() : 'Not provided'
+  };
+}
+
+/**
+ * Main EvaluatePrompt class
  */
 export class EvaluatePrompt {
   private modelSelector: ModelSelector;
@@ -159,6 +210,93 @@ export class EvaluatePrompt {
     this.modelSelector = modelSelector;
     this.logger = logger;
   }
+
+  /**
+   * FIXED: Build prompt with COMPRESSION-RESISTANT structure
+   * Uses explicit markers that survive aggressive compression
+    */
+  private async buildPromptByIntent(
+    intent: string,
+    input: EvaluatePromptInput,
+    classification: Classification
+  ): Promise<string> {
+    const responseLanguage = (classification as any).responseLanguage || 'en';
+
+    switch (intent) {
+      case 'mcq_generation': {
+        const difficulty = classification.level as 'basic' | 'intermediate' | 'advanced';
+        return buildMCQGenerationPrompt(input.userQuery, 5, difficulty, classification.subject);
+      }
+
+      case 'note_generation': {
+        const sourceText = input.topDocument?.text || '';
+        return buildNoteGenerationPrompt(input.userQuery, sourceText, true);
+      }
+
+      case 'mock_test_generation': {
+        const topics = [input.userQuery];
+        return buildMockTestPrompt(classification.subject, topics, 10, 60);
+      }
+
+      case 'quiz_evaluation': {
+        const { question, studentAnswer, correctAnswer } = parseQuizEvalInput(input.userQuery);
+        return buildQuizEvaluationPrompt(question, studentAnswer, correctAnswer, classification.subject);
+      }
+
+      default: {
+        const promptParts = buildEvaluationPrompt(
+          input.userQuery,
+          classification,
+          input.topDocument,
+          intent,
+          input.userPrefs,
+          input.conversationHistory,
+          input.userName
+        );
+
+        const systemPrompt = responseLanguage === 'hi'
+          ? buildHindiResponseWrapper(promptParts.systemPrompt)
+          : promptParts.systemPrompt;
+
+        //  Step 1: Compress history + reference IN PARALLEL
+        const { compressedHistory, compressedReference, savedTokens } = await compressContextInParallel(
+          promptParts.conversationHistory,
+          promptParts.reference,
+          this.logger
+        );
+
+        //  Step 2: Check if system needs compression (include query size)
+        const finalSystemPrompt = await compressSystemPromptIfNeeded(
+          systemPrompt,
+          compressedHistory,
+          compressedReference,
+          promptParts.currentQuery,
+          this.logger
+        );
+
+        // Step 3: Final combination
+        const finalPrompt = `${finalSystemPrompt}\n\n${compressedHistory}\n\n${compressedReference}\n\n${promptParts.currentQuery}`;
+
+        this.logger.info(
+          {
+            originalLength:
+              systemPrompt.length +
+              promptParts.conversationHistory.length +
+              promptParts.reference.length +
+              promptParts.currentQuery.length,
+            compressedLength: finalPrompt.length,
+            savedTokens,
+            estimatedTokens: Math.floor(finalPrompt.length / 4),
+            processingStrategy: 'PARALLEL(history:25%+ref:50%) → CONDITIONAL(system @ 1000 tokens) → QUERY uncompressed'
+          },
+          '[Compression]  PIPELINE COMPLETE'
+        );
+
+        return finalPrompt;
+      }
+    }
+  }
+
 
   /**
    * Streaming evaluation method
@@ -173,41 +311,42 @@ export class EvaluatePrompt {
     }
   ): Promise<void> {
     const startTime = Date.now();
+    const intent = (input.classification as any).intent || 'factual_retrieval';
+    const responseLanguage = (input.classification as any).responseLanguage || 'en';
+
     this.logger.info(
       {
         query: input.userQuery.substring(0, 80),
         subject: input.classification.subject,
         confidence: input.classification.confidence,
-        intent: (input.classification as any).intent
+        intent
       },
       '[EvaluatePrompt] Starting streaming evaluation'
     );
 
     try {
-      // STEP 1: Decide which model tier to use based on classification level
       const modelTier = this.selectModelTier(input.classification);
+      const statusMessage = getStatusMessage(modelTier, intent);
+
       this.logger.debug(
         {
           confidence: input.classification.confidence,
           tier: modelTier,
           subject: input.classification.subject,
-          intent: (input.classification as any).intent
+          intent
         },
         '[EvaluatePrompt] Model tier selected for streaming'
       );
 
-      // Send tier-based thinking status
-      const statusMessage = getStatusMessage(modelTier, input.classification.subject);
-
-      // Send metadata about model selection (status for frontend to display)
       callbacks.onMetadata({
         modelTier,
         subject: input.classification.subject,
         confidence: input.classification.confidence,
-        status: statusMessage
+        status: statusMessage,
+        intent,
+        language: responseLanguage
       });
 
-      // STEP 2: Get model config for the tier
       const config = modelConfigService.getModelConfig(
         {
           ...input.classification,
@@ -221,7 +360,6 @@ export class EvaluatePrompt {
         throw new Error(`Registry entry not found for model ${config.modelId}`);
       }
 
-      // STEP 3: Create tier-specific LLM using temperature and maxTokens from config
       const llm = createTierLLM(modelTier, registryEntry, this.logger, config.temperature, config.maxTokens);
 
       this.logger.info(
@@ -229,43 +367,25 @@ export class EvaluatePrompt {
           modelInfo: llm.getModelInfo(),
           tier: modelTier,
           temperature: config.temperature,
-          maxTokens: config.maxTokens
+          maxTokens: config.maxTokens,
+          intent
         },
         '[EvaluatePrompt] Tier-specific LLM created for streaming'
       );
 
-      // STEP 4: Build evaluation prompt - now returns 3 parts
-      const promptParts = buildEvaluationPrompt(
-        input.userQuery,
-        input.classification,
-        input.topDocument,
-        (input.classification as any).intent || 'factual_retrieval',
-        input.userPrefs,
-        input.conversationHistory,
-        input.userName
-      );
-
-      // STEP 4.5: Apply selective compression (FIX: Main change)
-      const prompt = await compressPromptSelectively(
-        promptParts.systemPrompt,
-        promptParts.conversationHistory,
-        promptParts.referenceAndQuery,
-        this.logger
-      );
+      const prompt = await this.buildPromptByIntent(intent, input, input.classification);
 
       this.logger.debug(
         {
-          originalSystemLength: promptParts.systemPrompt.length,
-          originalHistoryLength: promptParts.conversationHistory.length,
-          compressedPromptLength: prompt.length,
-          tier: modelTier
+          promptLength: prompt.length,
+          tier: modelTier,
+          intent
         },
         '[EvaluatePrompt] Prompt prepared for streaming'
       );
 
       let fullAnswer = '';
 
-      // STEP 5: Stream from tier-specific LLM
       await llm.stream(prompt, {
         onToken: (token: string) => {
           fullAnswer += token;
@@ -278,9 +398,10 @@ export class EvaluatePrompt {
               modelTier,
               latency,
               answerLength: fullAnswer.length,
-              modelInfo: llm.getModelInfo()
+              modelInfo: llm.getModelInfo(),
+              intent
             },
-            '[EvaluatePrompt] ✅ Streaming evaluation complete'
+            '[EvaluatePrompt]  Streaming evaluation complete'
           );
           callbacks.onComplete({
             answer: fullAnswer,
@@ -291,16 +412,16 @@ export class EvaluatePrompt {
         },
         onError: (error: Error) => {
           this.logger.error(
-            { error, query: input.userQuery.substring(0, 80) },
-            '[EvaluatePrompt] ❌ Streaming evaluation failed'
+            { error, query: input.userQuery.substring(0, 80), intent },
+            '[EvaluatePrompt]  Streaming evaluation failed'
           );
           callbacks.onError(error);
         }
       });
     } catch (error) {
       this.logger.error(
-        { error, query: input.userQuery.substring(0, 80) },
-        '[EvaluatePrompt] ❌ Streaming evaluation setup failed'
+        { error, query: input.userQuery.substring(0, 80), intent },
+        '[EvaluatePrompt]  Streaming evaluation setup failed'
       );
       callbacks.onError(error as Error);
     }
@@ -311,30 +432,31 @@ export class EvaluatePrompt {
    */
   async evaluate(input: EvaluatePromptInput): Promise<EvaluatePromptOutput> {
     const startTime = Date.now();
+    const intent = (input.classification as any).intent || 'factual_retrieval';
+
     this.logger.info(
       {
         query: input.userQuery.substring(0, 80),
         subject: input.classification.subject,
         confidence: input.classification.confidence,
-        intent: (input.classification as any).intent
+        intent
       },
       '[EvaluatePrompt] Starting evaluation'
     );
 
     try {
-      // STEP 1: Decide which model tier to use based on classification level
       const modelTier = this.selectModelTier(input.classification);
+
       this.logger.debug(
         {
           confidence: input.classification.confidence,
           tier: modelTier,
           subject: input.classification.subject,
-          intent: (input.classification as any).intent
+          intent
         },
         '[EvaluatePrompt] Model tier selected'
       );
 
-      // STEP 2: Get model config for the tier
       const config = modelConfigService.getModelConfig(
         {
           ...input.classification,
@@ -348,7 +470,6 @@ export class EvaluatePrompt {
         throw new Error(`Registry entry not found for model ${config.modelId}`);
       }
 
-      // STEP 3: Create tier-specific LLM using temperature and maxTokens from config
       const llm = createTierLLM(modelTier, registryEntry, this.logger, config.temperature, config.maxTokens);
 
       this.logger.info(
@@ -356,41 +477,23 @@ export class EvaluatePrompt {
           modelInfo: llm.getModelInfo(),
           tier: modelTier,
           temperature: config.temperature,
-          maxTokens: config.maxTokens
+          maxTokens: config.maxTokens,
+          intent
         },
         '[EvaluatePrompt] Tier-specific LLM created'
       );
 
-      // STEP 4: Build evaluation prompt - now returns 3 parts
-      const promptParts = buildEvaluationPrompt(
-        input.userQuery,
-        input.classification,
-        input.topDocument,
-        (input.classification as any).intent || 'factual_retrieval',
-        input.userPrefs,
-        input.conversationHistory,
-        input.userName
-      );
-
-      // STEP 4.5: Apply selective compression (FIX: Main change)
-      const prompt = await compressPromptSelectively(
-        promptParts.systemPrompt,
-        promptParts.conversationHistory,
-        promptParts.referenceAndQuery,
-        this.logger
-      );
+      const prompt = await this.buildPromptByIntent(intent, input, input.classification);
 
       this.logger.debug(
         {
-          originalSystemLength: promptParts.systemPrompt.length,
-          originalHistoryLength: promptParts.conversationHistory.length,
-          compressedPromptLength: prompt.length,
-          tier: modelTier
+          promptLength: prompt.length,
+          tier: modelTier,
+          intent
         },
         '[EvaluatePrompt] Prompt prepared'
       );
 
-      // STEP 5: Invoke tier-specific LLM
       const answer = await llm.generate(prompt);
 
       const latency = Date.now() - startTime;
@@ -400,9 +503,10 @@ export class EvaluatePrompt {
           modelTier,
           latency,
           answerLength: answer.length,
-          modelInfo: llm.getModelInfo()
+          modelInfo: llm.getModelInfo(),
+          intent
         },
-        '[EvaluatePrompt] ✅ Evaluation complete'
+        '[EvaluatePrompt]  Evaluation complete'
       );
 
       return {
@@ -413,8 +517,8 @@ export class EvaluatePrompt {
       };
     } catch (error) {
       this.logger.error(
-        { error, query: input.userQuery.substring(0, 80) },
-        '[EvaluatePrompt] ❌ Evaluation failed'
+        { error, query: input.userQuery.substring(0, 80), intent },
+        '[EvaluatePrompt]  Evaluation failed'
       );
       throw error;
     }
@@ -422,47 +526,38 @@ export class EvaluatePrompt {
 
   /**
    * Select model tier based on classification level
-   *
-   * Rules:
-   * - Respects the classification level directly
-   * - Basic → basic model
-   * - Intermediate → intermediate model
-   * - Advanced → advanced model
    */
   private selectModelTier(classification: Classification): 'basic' | 'intermediate' | 'advanced' {
     const level = classification.level;
-    const confidence = classification.confidence;
 
-    this.logger.debug(
-      { level, confidence },
-      '[EvaluatePrompt] Selecting model tier based on classification level'
-    );
+    this.logger.debug({ level }, '[EvaluatePrompt] Selecting model tier based on classification level');
 
-    // Directly use the classification level
-    if (level === 'basic') {
-      this.logger.info('[EvaluatePrompt] Using BASIC model for basic-level question');
-      return 'basic';
+    switch (level) {
+      case 'basic':
+        this.logger.info('[EvaluatePrompt] Using BASIC model for basic-level question');
+        return 'basic';
+
+      case 'intermediate':
+        this.logger.info('[EvaluatePrompt] Using INTERMEDIATE model for intermediate-level question');
+        return 'intermediate';
+
+      case 'advanced':
+        this.logger.info('[EvaluatePrompt] Using ADVANCED model for advanced-level question');
+        return 'advanced';
+
+      default:
+        this.logger.warn({ level }, '[EvaluatePrompt] Unknown level, defaulting to intermediate');
+        return 'intermediate';
     }
-
-    if (level === 'intermediate') {
-      this.logger.info('[EvaluatePrompt] Using INTERMEDIATE model for intermediate-level question');
-      return 'intermediate';
-    }
-
-    if (level === 'advanced') {
-      this.logger.info('[EvaluatePrompt] Using ADVANCED model for advanced-level question');
-      return 'advanced';
-    }
-
-    // Fallback: use intermediate as safe default
-    this.logger.warn({ level }, '[EvaluatePrompt] Unknown level, defaulting to intermediate');
-    return 'intermediate';
   }
 }
 
 /**
- * Factory function to create EvaluatePrompt instance
+ * Factory function
  */
-export function createEvaluatePrompt(modelSelector: ModelSelector, logger: pino.Logger): EvaluatePrompt {
+export function createEvaluatePrompt(
+  modelSelector: ModelSelector,
+  logger: pino.Logger
+): EvaluatePrompt {
   return new EvaluatePrompt(modelSelector, logger);
 }

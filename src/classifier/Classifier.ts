@@ -42,7 +42,11 @@ const ClassificationSchema = z.object({
     'summarize',
     'change_tone',
     'proofread',
-    'make_email_professional'
+    'make_email_professional',
+    'mcq_generation',
+    'note_generation',
+    'mock_test_generation',
+    'quiz_evaluation'
   ])
     .describe('The user intent - what type of response format is expected'),
   expectedFormat: z.string()
@@ -53,6 +57,8 @@ const ClassificationSchema = z.object({
 export interface ClassificationWithIntent extends Classification {
   intent?: string;
   expectedFormat?: string;
+  responseLanguage?: 'en' | 'hi';
+  userMode?: 'student' | 'educator';
 }
 
 /**
@@ -296,12 +302,22 @@ export class Classifier {
         expectedFormat: validated.expectedFormat
       }, '[Classifier] LLM classification successful');
 
+      const responseLanguage = (query.toLowerCase().includes('हिंदी') ||
+        query.toLowerCase().includes('hindi me') ||
+        query.toLowerCase().includes('hindi mein')) ? 'hi' : 'en';
+
+      // Detect educator mode from query
+      const educatorKeywords = ['generate notes', 'create mcq', 'mock test', 'quiz'];
+      const userMode = educatorKeywords.some(kw => query.toLowerCase().includes(kw)) ? 'educator' : 'student';
+
       return {
         subject: validated.subject,
         level: validated.level as 'basic' | 'intermediate' | 'advanced',
         confidence: validated.confidence,
         intent: validated.intent,
-        expectedFormat: validated.expectedFormat || 'Direct answer with bullet points or concise explanation'
+        expectedFormat: validated.expectedFormat || 'Direct answer with bullet points',
+        responseLanguage,
+        userMode
       };
 
     } catch (error: any) {
@@ -351,20 +367,44 @@ export class Classifier {
   /**
    * Helper method to detect user intent from query
    */
-  private detectIntent(query: string): { intent: string; expectedFormat: string } {
+  private detectIntent(query: string): { intent: string; expectedFormat: string; responseLanguage: 'en' | 'hi' } {
     const q = query.toLowerCase();
     const config = modelConfigService.getClassificationConfig();
 
-    // Count matches for each intent using patterns from config
+    // DETECT HINDI PREFERENCE
+    const hindiKeywords = ['हिंदी में', 'hindi me', 'hindi mein', 'हिन्दी'];
+    const wantHindi = hindiKeywords.some(kw => q.includes(kw));
+    const responseLanguage = wantHindi ? 'hi' : 'en';
+
+    // DETECT EDUCATOR MODE
+    const educatorKeywords = ['generate notes', 'create mcq', 'mock test', 'quiz', 'teacher', 'educator'];
+    const isEducatorMode = educatorKeywords.some(kw => q.includes(kw));
+
+    // EXISTING: Count matches for each intent using patterns from config
     const intentScores: Record<string, number> = {};
     for (const [intent, patterns] of Object.entries(config.intentPatterns)) {
       intentScores[intent] = this.countMatches(q, patterns);
     }
 
+    // NEW: Add educator intent detection
+    if (isEducatorMode) {
+      if (q.includes('notes') || q.includes('summary')) {
+        intentScores['note_generation'] = 10;
+      }
+      if (q.includes('mcq') || q.includes('questions') || q.includes('quiz')) {
+        intentScores['mcq_generation'] = 10;
+      }
+      if (q.includes('mock') || q.includes('test')) {
+        intentScores['mock_test_generation'] = 10;
+      }
+      if (q.includes('check') || q.includes('grade') || q.includes('evaluate')) {
+        intentScores['quiz_evaluation'] = 10;
+      }
+    }
+
     // Find intent with highest score
     let maxIntent = 'factual_retrieval';
     let maxScore = intentScores.factual_retrieval || 0;
-
     for (const [intent, score] of Object.entries(intentScores)) {
       if (score > maxScore) {
         maxIntent = intent;
@@ -375,7 +415,7 @@ export class Classifier {
     const expectedFormat = config.expectedFormats[maxIntent as keyof typeof config.expectedFormats]
       || config.expectedFormats.factual_retrieval;
 
-    return { intent: maxIntent, expectedFormat };
+    return { intent: maxIntent, expectedFormat, responseLanguage };
   }
 
   /**
@@ -447,12 +487,16 @@ export class Classifier {
     }
 
     // Detect user intent
-    const { intent, expectedFormat } = this.detectIntent(query);
+    const { intent, expectedFormat, responseLanguage } = this.detectIntent(query);
+    const educatorKeywords = ['generate notes', 'create mcq', 'mock test', 'quiz', 'teacher', 'educator'];
+    const isEducatorMode = educatorKeywords.some(kw => query.toLowerCase().includes(kw));
 
     this.logger.info({
       subject, level, confidence,
       query: query.substring(0, 80),
-      intent, expectedFormat
+      intent, expectedFormat,
+      responseLanguage,
+      userMode: isEducatorMode ? 'educator' : 'student'
     }, '[Classifier] Heuristic classification complete');
 
     return {
@@ -460,7 +504,9 @@ export class Classifier {
       level,
       confidence,
       intent,
-      expectedFormat
+      expectedFormat,
+      responseLanguage,
+      userMode: isEducatorMode ? 'educator' : 'student'
     };
   }
 
