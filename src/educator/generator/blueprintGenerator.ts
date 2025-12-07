@@ -3,37 +3,21 @@ import { z } from "zod";
 import { modelConfigService } from "../../config/modelConfig.ts";
 import { buildBlueprintGenerationPrompt } from "../../utils/promptTemplates.ts";
 import { createTierLLM } from "../../llm/tierLLM.ts";
-import { Classification } from "../../types/index.ts";
+import { Classification, AssessmentCategory } from "../../types/index.ts";
+import { createTopicValidator, ValidatorConfig } from "./topicValidator.ts";
 
+// Standardized blueprint schema matching AssessmentRequest structure
 export const BlueprintSchema = z.object({
-  totalQuestions: z.number().min(1).max(100),
-  numberOfBatches: z.number().min(1),
+  examTags: z.array(z.string()),
+  subject: z.string(),
+  totalQuestions: z.number().min(1).max(150),
   topics: z.array(
     z.object({
       topicName: z.string(),
-      description: z.string(),
-      difficulty: z.enum(["basic", "intermediate", "advanced"]),
-      questionCount: z.number(),
-      priority: z.enum(["high", "medium", "low"]),
+      level: z.array(z.enum(["easy", "medium", "hard", "mix"])),
+      noOfQuestions: z.number(),
     })
   ),
-  selectedModel: z.object({
-    name: z.string(),
-    modelId: z.string(),
-    temperature: z.number(),
-    reason: z.string(),
-  }),
-  pipelineNodes: z.array(z.string()),
-  generationStrategy: z.object({
-    batchSize: z.number(),
-    concurrency: z.number(),
-    retryLimit: z.number(),
-  }),
-  metadata: z.object({
-    estimatedTime: z.string(),
-    userPreferences: z.record(z.any()).optional(),
-    contextFromResearch: z.boolean(),
-  }),
 });
 
 export type Blueprint = z.infer<typeof BlueprintSchema>;
@@ -42,151 +26,144 @@ export type Blueprint = z.infer<typeof BlueprintSchema>;
  * BLUEPRINT GENERATOR
  * Creates structured plans for question generation
  *
+ * Execution rules:
+ * - If topics are missing/empty: generate blueprint with LLM
+ * - If topics are provided: validate and normalize to totalQuestions, bypass blueprint
+ * - Only adjust question counts, never invent new topics (unless input was empty)
+ *
  * Uses existing infrastructure:
  * - modelConfigService for model selection
  * - createTierLLM for LLM initialization to generate blueprint
  * - buildBlueprintGenerationPrompt from promptTemplates
+ * - TopicValidator for topic validation and normalization
  */
 export class BlueprintGenerator {
-  constructor(private logger: pino.Logger) {}
+  private topicValidator: ReturnType<typeof createTopicValidator>;
+  private validatorConfig: ValidatorConfig;
+
+  constructor(
+    private logger: pino.Logger,
+    validatorConfig?: ValidatorConfig
+  ) {
+    this.topicValidator = createTopicValidator(logger);
+    this.validatorConfig = {
+      maxQuestionsPerNewTopic: 10,
+      distributionStrategy: "round-robin",
+      allowBlueprintWhenTopicsProvided: false,
+      ...validatorConfig,
+    };
+  }
 
   /**
    * Main entry point
-   * Generates blueprint from query + classification using LLM
+   * 1. Validates and normalizes user-provided topics (if any)
+   * 2. Generates blueprint only if topics are missing/empty
+   * 3. Returns standardized request object with validated topics
    */
   async generateBlueprint(
-    query: string,
-    classification: Classification
+    request: { examTags: string[]; subject: string; totalQuestions: number; topics?: any[] },
+    classification: Classification,
+    assessmentCategory: AssessmentCategory = 'quiz'
   ): Promise<Blueprint> {
     try {
       this.logger.info(
         {
-          query: query.substring(0, 60),
-          subject: classification.subject,
-          level: classification.level,
+          examTags: request.examTags,
+          subject: request.subject,
+          totalQuestions: request.totalQuestions,
+          topicsProvided: request.topics?.length || 0,
+          topicsArray: request.topics || [],
         },
-        "[Blueprint] Starting blueprint generation with LLM"
+        "[Blueprint] Starting blueprint generation (new execution rules)"
       );
 
-      // STEP 1: Get model config for blueprint generation (Intermediate tier)
-      const modelConfig = modelConfigService.getModelConfig(
-        classification,
-        "free"
+      // Step 1: Validate and normalize provided topics
+      const validationResult = await this.topicValidator.validateAndNormalizeTopics(
+        request.topics,
+        request.totalQuestions,
+        this.validatorConfig
       );
-
-      const modelRegistry = modelConfigService.getModelRegistryEntry(
-        modelConfig.modelId
-      );
-
-      if (!modelRegistry) {
-        throw new Error(
-          `Model registry not found for ${modelConfig.modelId}`
-        );
-      }
-
-      this.logger.debug(
-        {
-          modelId: modelConfig.modelId,
-          temperature: modelConfig.temperature,
-        },
-        "[Blueprint] Model config retrieved"
-      );
-
-      // STEP 2: Create LLM instance for blueprint generation
-      const tier = (classification.level as "basic" | "intermediate" | "advanced");
-      const llm = createTierLLM(
-        tier,
-        modelRegistry,
-        this.logger,
-        0.2, // Deterministic: low temperature for consistent planning
-        1024 // Max tokens for blueprint
-      );
-
-      this.logger.debug(
-        { modelInfo: llm.getModelInfo() },
-        "[Blueprint] LLM instance created for blueprint generation"
-      );
-
-      // STEP 3: Build prompt using buildBlueprintGenerationPrompt
-      const prompt = buildBlueprintGenerationPrompt(query, classification);
-
-      this.logger.debug(
-        { promptLength: prompt.length },
-        "[Blueprint] Prompt built for blueprint generation"
-      );
-
-      // STEP 4: Generate blueprint via LLM
-      const blueprintJson = await llm.generate(prompt);
-
-      this.logger.debug(
-        { responseLength: blueprintJson.length },
-        "[Blueprint] LLM generated blueprint response"
-      );
-
-      // STEP 5: Parse and validate JSON response
-      let parsedBlueprint: any;
-      try {
-        parsedBlueprint = JSON.parse(blueprintJson);
-      } catch (parseError) {
-        this.logger.warn(
-          { error: parseError, response: blueprintJson.substring(0, 200) },
-          "[Blueprint] Failed to parse LLM response as JSON, using fallback heuristics"
-        );
-        parsedBlueprint = this.fallbackBlueprintFromQuery(
-          query,
-          classification
-        );
-      }
-
-      // STEP 6: Enhance with computed values
-      const totalQuestions = parsedBlueprint.totalQuestions || this.extractQuestionCount(query);
-      const numberOfBatches = Math.ceil(totalQuestions / 5);
-
-      const blueprint: Blueprint = {
-        totalQuestions,
-        numberOfBatches,
-        topics: parsedBlueprint.topics || this.generateTopics(classification, totalQuestions),
-        selectedModel: {
-          name: this.getModelName(modelConfig.modelId),
-          modelId: modelConfig.modelId,
-          temperature: modelConfig.temperature,
-          reason:
-            parsedBlueprint.selectedModel?.reason ||
-            `${tier.charAt(0).toUpperCase() + tier.slice(1)} difficulty - model selected by modelConfigService`,
-        },
-        pipelineNodes: parsedBlueprint.pipelineNodes || [
-          "research",
-          "topic_batch_creation",
-          "generate",
-          "validate",
-        ],
-        generationStrategy: parsedBlueprint.generationStrategy || {
-          batchSize: 5,
-          concurrency: 5,
-          retryLimit: 3,
-        },
-        metadata: {
-          estimatedTime: `${numberOfBatches * 8} seconds`,
-          userPreferences: {
-            subject: classification.subject,
-            level: classification.level,
-          },
-          contextFromResearch: false,
-        },
-      };
-
-      // STEP 7: Validate blueprint
-      const validated = BlueprintSchema.parse(blueprint);
 
       this.logger.info(
         {
-          totalQuestions: validated.totalQuestions,
-          numberOfBatches: validated.numberOfBatches,
-          topicsCount: validated.topics.length,
-          selectedModel: validated.selectedModel.name,
-          modelId: validated.selectedModel.modelId,
+          action: validationResult.action,
+          reason: validationResult.reason,
+          inputTopics: request.topics?.length || 0,
+          outputTopics: validationResult.topics?.length || 0,
+          metadata: validationResult.metadata,
         },
-        "[Blueprint] ✅ Blueprint generated successfully via LLM"
+        "[Blueprint] Topic validation decision"
+      );
+
+      // Step 2: If topics are valid and present, use them as-is
+      if (validationResult.action === "bypass_blueprint") {
+        if (!validationResult.topics) {
+          throw new Error("Validation returned bypass_blueprint but topics is null");
+        }
+
+        const blueprint: Blueprint = {
+          examTags: request.examTags,
+          subject: request.subject,
+          totalQuestions: request.totalQuestions,
+          topics: validationResult.topics.map(t => ({
+            topicName: t.topicName,
+            level: (t.level || ["mix"]) as ("easy" | "medium" | "hard" | "mix")[],
+            noOfQuestions: t.noOfQuestions,
+          })),
+        };
+
+        const validated = BlueprintSchema.parse(blueprint);
+        this.logger.info(
+          {
+            totalQuestions: validated.totalQuestions,
+            topicsCount: validated.topics.length,
+            reason: validationResult.reason,
+            change: validationResult.metadata.change || "none",
+          },
+          "[Blueprint] ✅ Using user-provided topics (normalized)"
+        );
+        return validated;
+      }
+
+      // Step 3: If validation failed or topics are invalid, return error
+      if (!validationResult.isValid) {
+        throw new Error(
+          validationResult.metadata.error ||
+            "Topic validation failed and blueprint is not allowed"
+        );
+      }
+
+      // Step 4: Generate topics using LLM
+      this.logger.info(
+        {
+          reason: validationResult.reason,
+          totalQuestions: request.totalQuestions,
+        },
+        "[Blueprint] No valid topics provided, generating with LLM"
+      );
+
+      const generatedTopics = await this.generateTopicsWithLLM(
+        request.subject,
+        request.totalQuestions,
+        classification,
+        request.examTags
+      );
+
+      const blueprint: Blueprint = {
+        examTags: request.examTags,
+        subject: request.subject,
+        totalQuestions: request.totalQuestions,
+        topics: generatedTopics,
+      };
+
+      const validated = BlueprintSchema.parse(blueprint);
+      this.logger.info(
+        {
+          totalQuestions: validated.totalQuestions,
+          topicsCount: validated.topics.length,
+          topicDetails: validated.topics.map(t => `${t.topicName} (${t.noOfQuestions}q)`),
+        },
+        "[Blueprint] ✅ Blueprint generated with LLM topics"
       );
 
       return validated;
@@ -200,61 +177,86 @@ export class BlueprintGenerator {
   }
 
   /**
-   * Fallback: Generate blueprint heuristically when LLM fails
-   * Uses same logic as before but ensures it works
+   * Generate topics using LLM when user doesn't provide them
    */
-  private fallbackBlueprintFromQuery(
-    query: string,
-    classification: Classification
-  ): Partial<Blueprint> {
-    this.logger.info(
-      "[Blueprint] Using fallback heuristic blueprint generation"
-    );
-
-    const totalQuestions = this.extractQuestionCount(query);
-    const topics = this.generateTopics(classification, totalQuestions);
-
-    return {
-      totalQuestions,
-      topics,
-      pipelineNodes: [
-        "research",
-        "topic_batch_creation",
-        "generate",
-        "validate",
-      ],
-      generationStrategy: {
-        batchSize: 3,
-        concurrency: 5,
-        retryLimit: 3,
-      },
-    };
-  }
-
-  /**
-   * Extract question count from query
-   * Looks for patterns like "5 questions", "20 MCQs", etc.
-   */
-  private extractQuestionCount(query: string): number {
-    const match = query.match(/(\d+)\s*(questions?|mcqs?|quiz|test)/i);
-    if (match) {
-      return Math.min(parseInt(match[1]), 100); // Max 100
-    }
-    return 5; // Default
-  }
-
-  /**
-   * Generate topics based on subject
-   * Distributes questions across relevant topics
-   * Reduced to 2-3 questions per topic for better topic diversity
-   */
-  private generateTopics(
+  private async generateTopicsWithLLM(
+    subject: string,
+    totalQuestions: number,
     classification: Classification,
-    totalQuestions: number
-  ): Blueprint["topics"] {
-    const { subject, level } = classification;
+    examTags: string[]
+  ): Promise<Blueprint['topics']> {
+    try {
+      const modelConfig = modelConfigService.getModelConfig(classification, "free");
+      const modelRegistry = modelConfigService.getModelRegistryEntry(modelConfig.modelId);
+      
+      if (!modelRegistry) {
+        throw new Error(`Model registry not found for ${modelConfig.modelId}`);
+      }
 
-    // Subject → Topics mapping
+      const tier = classification.level as "basic" | "intermediate" | "advanced";
+      const llm = createTierLLM(tier, modelRegistry, this.logger, 0.2, 1024);
+
+      const maxQuestionsPerTopic = this.validatorConfig.maxQuestionsPerNewTopic || 10;
+      const prompt = buildBlueprintGenerationPrompt(
+        examTags,
+        subject,
+        totalQuestions,
+        classification.level,
+        maxQuestionsPerTopic
+      );
+
+      const response = await llm.generate(prompt);
+      const parsed = JSON.parse(response);
+      
+      if (parsed.topics && Array.isArray(parsed.topics)) {
+        return parsed.topics;
+      }
+      
+      throw new Error('Invalid LLM response format');
+    } catch (error) {
+      this.logger.warn(
+        { error },
+        "[Blueprint] LLM topic generation failed, using fallback"
+      );
+      return this.generateTopicsFallback(subject, totalQuestions, classification);
+    }
+  }
+
+  /**
+   * Fallback: Generate topics heuristically when LLM fails
+   */
+  private generateTopicsFallback(
+    subject: string,
+    totalQuestions: number,
+    classification: Classification
+  ): Blueprint['topics'] {
+    this.logger.info("[Blueprint] Using fallback heuristic topic generation");
+
+    const topics = this.getTopicsForSubject(subject);
+    const maxQuestionsPerTopic = this.validatorConfig.maxQuestionsPerNewTopic || 10;
+    const topicCount = Math.min(
+      5,
+      Math.max(3, Math.ceil(totalQuestions / maxQuestionsPerTopic))
+    );
+    const questionsPerTopic = Math.floor(totalQuestions / topicCount);
+    const remainder = totalQuestions % topicCount;
+
+    const result: Blueprint['topics'] = [];
+    for (let i = 0; i < topicCount && i < topics.length; i++) {
+      result.push({
+        topicName: topics[i],
+        level: ["mix"],
+        noOfQuestions: questionsPerTopic + (i < remainder ? 1 : 0),
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Get topics for a given subject (helper method)
+   */
+  private getTopicsForSubject(subject: string): string[] {
     const topicMap: Record<string, string[]> = {
       math: [
         "Arithmetic",
@@ -301,6 +303,18 @@ export class BlueprintGenerator {
         "Analytical Reasoning",
         "Deductive Logic",
       ],
+      quantitative_aptitude: [
+        "Profit and Loss",
+        "Time and Work",
+        "Time Speed Distance",
+        "Ratio and Proportion",
+        "Percentage",
+        "Simple and Compound Interest",
+        "Data Interpretation",
+        "Number System",
+        "Averages",
+        "Mixtures and Alligations",
+      ],
       general: [
         "General Knowledge",
         "Current Affairs",
@@ -311,43 +325,8 @@ export class BlueprintGenerator {
       ],
     };
 
-    const subjectTopics =
-      topicMap[subject as keyof typeof topicMap] || topicMap.general;
-
-    // Distribute questions across more topics (2-3 per topic instead of 5)
-    // This gives better diversity: 20 questions = 6-7 topics with 2-3 questions each
-    const questionsPerTopic = Math.max(2, Math.ceil(totalQuestions / Math.ceil(totalQuestions / 3)));
-    const topicsToUse = Math.min(
-      Math.ceil(totalQuestions / questionsPerTopic),
-      subjectTopics.length
-    );
-
-    return subjectTopics.slice(0, topicsToUse).map((topicName, index) => {
-      const baseQuestionCount = Math.floor(totalQuestions / topicsToUse);
-      const remainder = totalQuestions % topicsToUse;
-      
-      return {
-        topicName,
-        description: `Focus on ${topicName} at ${level} level. Include diverse question types covering different aspects.`,
-        difficulty: level as "basic" | "intermediate" | "advanced",
-        questionCount: index < remainder ? baseQuestionCount + 1 : baseQuestionCount,
-        priority: index === 0 ? "high" : index < Math.ceil(topicsToUse / 2) ? "medium" : "low",
-      };
-    });
-  }
-
-  /**
-   * Get human-readable model name
-   */
-  private getModelName(modelId: string): string {
-    const names: Record<string, string> = {
-      "anthropic.claude-3-haiku-20240307-v1:0": "Claude Haiku",
-      "anthropic.claude-3-5-sonnet-20241022-v2:0": "Claude Sonnet 3.5",
-      "anthropic.claude-sonnet-4-20250514-v1:0": "Claude Sonnet 4",
-      "anthropic.claude-3-sonnet-20240229-v1:0": "Claude Sonnet 3",
-    };
-
-    return names[modelId] || "Custom Model";
+    const normalizedSubject = subject.toLowerCase().replace(/\s+/g, '_');
+    return topicMap[normalizedSubject as keyof typeof topicMap] || topicMap.general;
   }
 }
 

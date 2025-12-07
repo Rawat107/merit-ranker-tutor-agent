@@ -399,7 +399,7 @@ Output: What is the value of 234 π?
 /**
  * Get response format based on user intent
  */
-function getResponseFormatByIntent(intent: string): string {
+export function getResponseFormatByIntent(intent: string): string {
   const formats: Record<string, string> = {
     'factual_retrieval': `
 - Start with "Answer:" 
@@ -570,140 +570,344 @@ Return JSON with:
 
 
 
-export function buildBlueprintGenerationPrompt(
-  userQuery: string,
-  classification: any
+/**
+ * Assessment type definition
+ */
+export type AssessmentType = "quiz" | "mock_test" | "test_series";
+
+/**
+ * Build assessment generation prompt
+ * Handles quiz, mock test, and test series with proper formatting
+ */
+export function buildAssessmentGenerationPrompt(params: {
+  category: AssessmentType;
+  subject: string;
+  topic?: string;
+  difficulty: "EASY" | "MEDIUM" | "HARD";
+  questionCount: number;
+  numberOfTests?: number;
+  examPattern?: string;
+  sectionsPattern?: Array<{
+    name: string;
+    questions: number;
+    marks?: number;
+    time?: number;
+  }>;
+  needExplanations: boolean;
+  exams?: string[];
+  durationMinutes?: number;
+}): string {
+  // Get category-specific rules
+  const categoryRules = getCategoryRules(params.category, params.needExplanations);
+
+  // Build sections description
+  let sectionsDescription = "";
+  if (params.sectionsPattern && params.sectionsPattern.length > 0) {
+    sectionsDescription = `\nSections and Pattern:\n${params.sectionsPattern
+      .map(
+        (s) =>
+          `- ${s.name}: ${s.questions} questions${s.marks ? ` (${s.marks} marks)` : ""}${s.time ? ` (${s.time} min)` : ""}`
+      )
+      .join("\n")}`;
+  } else if (params.examPattern) {
+    sectionsDescription = `\nExam Pattern: ${params.examPattern}`;
+  } else {
+    sectionsDescription = `\nPattern: Auto-detect common pattern for ${params.exams?.join(", ") || "competitive exams"}`;
+  }
+
+  // Build duration note
+  const durationNote = params.durationMinutes
+    ? `\nSuggested Duration: ${params.durationMinutes} minutes`
+    : "";
+
+  // Build exams note
+  const examsNote = params.exams && params.exams.length > 0
+    ? `\nTarget Exams: ${params.exams.join(", ")}`
+    : "";
+
+  // Test series specific parameters
+  const testSeriesNote =
+    params.category === "test_series" && params.numberOfTests
+      ? `\nGenerate ${params.numberOfTests} separate full-length tests, each with ${params.questionCount} questions.`
+      : "";
+
+  return `You are an assessment generator for competitive exams.
+
+TASK: Generate ${params.category === "test_series" ? `${params.numberOfTests} separate` : "a"} ${params.category.replace(/_/g, " ")} ${params.category === "test_series" ? "tests" : ""}
+
+Category: ${params.category}
+Subject: ${params.subject}
+${params.topic ? `Topic: ${params.topic}` : ""}
+Difficulty: ${params.difficulty}
+Questions per ${params.category === "test_series" ? "test" : "assessment"}: ${params.questionCount}
+${testSeriesNote}
+${sectionsDescription}
+${examsNote}
+${durationNote}
+
+CATEGORY RULES:
+${categoryRules}
+
+OUTPUT REQUIREMENTS:
+${getOutputFormat(params.category, params.needExplanations)}
+
+IMPORTANT GUIDELINES:
+- Use clear, unambiguous language
+- All questions must be multiple-choice with 4 options (A, B, C, D)
+- Ensure questions are non-repetitive within each test
+- Options should be plausible but clearly distinguishable
+- Maintain consistent difficulty level throughout
+- If explanations are included, keep them concise (2-3 lines)
+${params.category === "test_series" ? "- Do NOT include any explanations for test_series, only Q, options, and correct answer" : ""}
+${params.category === "mock_test" ? "- Structure sections properly with correct marks and timing" : ""}
+
+Now generate the assessment:`;
+}
+
+/**
+ * Get category-specific rules
+ */
+function getCategoryRules(
+  category: AssessmentType,
+  needExplanations: boolean
 ): string {
-  return `You are an intelligent blueprint architect for question generation.
+  switch (category) {
+    case "quiz":
+      return `- Create a small-to-medium practice set
+- Questions should be straightforward but comprehensive
+- Pattern is flexible based on the subject
+- ${needExplanations ? "Include brief 2-3 line explanations after each question" : "No explanations required"}
+- Ideal for quick practice and concept reinforcement`;
 
-Given a user query and its classification, create a structured plan for generating questions.
+    case "mock_test":
+      return `- Create a single, full-length test that simulates the real exam
+- Follow the proper exam pattern with sections, marks, and timing
+- Include realistic difficulty distribution
+- ${needExplanations ? "Provide detailed solutions after all questions (or mark solutions section)" : "No explanations required"}
+- Ensure proper marks allocation per question
+- Include negative marking rules if applicable`;
 
-USER QUERY: "${userQuery}"
+    case "test_series":
+      return `- Create multiple separate full-length tests
+- Each test must follow the exact exam pattern specified
+- All tests should have same structure but different questions
+- ONLY output questions, options, and correct answers
+- Do NOT include any explanations, rationales, or detailed solutions
+- Each test is independent and complete`;
 
-CLASSIFICATION:
-- Subject: ${classification.subject}
-- Level: ${classification.level}
-- Intent: ${(classification as any).intent || 'mcq_generation'}
-- Confidence: ${classification.confidence}
-
-YOUR TASK:
-Create a JSON response that specifies:
-1. Total questions needed (extract from query or use reasonable default)
-2. Number of batches (calculate: totalQuestions / 3, round up)
-3. Topics to cover (diverse, relevant subtopics for the subject - NOT limited to predefined lists)
-4. Pipeline nodes (always: ["research", "topic_batch_creation", "generate", "validate"])
-5. Generation strategy (batchSize: 3-4, concurrency: 5, retryLimit: 3)
-
-GUIDELINES:
-- For math subjects: Include theoretical foundations, applications, and problem-solving
-- For science subjects: Include conceptual understanding, real-world examples, and practical applications
-- For humanities: Include historical context, cultural significance, and comparative analysis
-- For reasoning: Include logical thinking, pattern analysis, and creative problem-solving
-- For general knowledge: Include diverse domains, current topics, and interdisciplinary connections
-
-EXAMPLE RESPONSE FORMAT:
-{
-  "totalQuestions": 20,
-  "numberOfBatches": 5,
-  "topics": [
-    {
-      "topicName": "Advanced Concepts",
-      "description": "Focus on advanced aspects with practical examples",
-      "difficulty": "intermediate",
-      "questionCount": 3,
-      "priority": "high"
-    },
-    {
-      "topicName": "Foundational Knowledge",
-      "description": "Cover core concepts and fundamentals",
-      "difficulty": "intermediate",
-      "questionCount": 3,
-      "priority": "high"
-    }
-  ],
-  "pipelineNodes": ["research", "topic_batch_creation", "generate", "validate"],
-  "generationStrategy": {
-    "batchSize": 3,
-    "concurrency": 5,
-    "retryLimit": 3
+    default:
+      return "Invalid category";
   }
 }
 
-RULES:
-- Extract question count from query (look for numbers + "questions", "MCQs", etc)
-- Default to 10 if no number found
-- Distribute questions evenly across 5-7 diverse topics (2-3 questions per topic)
-- Reduce batchSize to 3-4 for better question diversity per batch
-- Set first topic priority to "high", rest to "medium" or "low"
-- Topics should be SPECIFIC and DIVERSE - not generic categories
-- Think creatively about subtopics relevant to the query
+/**
+ * Get output format instructions
+ */
+function getOutputFormat(
+  category: AssessmentType,
+  needExplanations: boolean
+): string {
+  const baseFormat = `For each question:
+- Question ID (Q1, Q2, etc.)
+- Question text
+- Options (A, B, C, D)
+- Correct option`;
 
-Respond with ONLY the JSON object, no markdown formatting, no explanations.`;
+  switch (category) {
+    case "quiz":
+      return `${baseFormat}${
+        needExplanations ? `
+- Explanation (2-3 lines, if applicable)` : ""
+      }
+
+Example format:
+Q1. What is 50% of 200?
+A) 50
+B) 100
+C) 150
+D) 200
+Correct: B
+${needExplanations ? `Explanation: 50% means 1/2, so 50% of 200 = 200/2 = 100.` : ""}`;
+
+    case "mock_test":
+      return `${baseFormat}${
+        needExplanations ? `
+- Detailed Explanation/Solution` : ""
+      }
+
+Structure:
+[SECTION NAME – Total Marks: X, Time: Y minutes]
+Q1. [question] | Options A-D | Correct: [X]
+Q2. [question] | Options A-D | Correct: [X]
+...
+${
+  needExplanations
+    ? `
+
+[SOLUTIONS / EXPLANATIONS SECTION]
+Q1. [Detailed explanation/solution]
+Q2. [Detailed explanation/solution]
+...`
+    : ""
+}`;
+
+    case "test_series":
+      return `${baseFormat}
+
+Format for each test:
+TEST 1
+[SECTION NAME – Total Marks: X, Time: Y minutes]
+Q1. [question] | A) ... | B) ... | C) ... | D) ... | Correct: [X]
+Q2. [question] | A) ... | B) ... | C) ... | D) ... | Correct: [X]
+...
+
+TEST 2
+[Same structure, different questions]
+...
+
+DO NOT include explanations, solutions, or rationales anywhere in the output.`;
+
+    default:
+      return baseFormat;
+  }
 }
 
-export function buildPromptRefinementPrompt(
-  userQuery: string,
-  blueprintTopics: Array<{
-    topicName: string;
-    description: string;
-    difficulty: 'basic' | 'intermediate' | 'advanced';
-    questionCount: number;
-    priority: 'high' | 'medium' | 'low';
-  }>,
-  webSearchResults: Array<{ text: string; url?: string }>,
-  awsKbResults: Array<{ text: string; source?: string }>,
+/**
+ * Build blueprint generation prompt for topic creation
+ * Used when topics are NOT provided by the user
+ */
+export function buildBlueprintGenerationPrompt(
+  examTags: string[],
   subject: string,
-  level: 'basic' | 'intermediate' | 'advanced'
+  totalQuestions: number,
+  difficultyLevel: string,
+  maxQuestionsPerTopic: number
 ): string {
-  const webContext = webSearchResults.map((r, i) => `[Web ${i + 1}]: ${r.text}`).join('\n\n');
-  const kbContext = awsKbResults.map((r, i) => `[KB ${i + 1}]: ${r.text}`).join('\n\n');
+  return `You are an expert educator creating assessment topics for ${examTags.join(', ')} exam preparation.
 
-  return `You are an expert prompt engineer for creating question generation prompts.
+Subject: ${subject}
+Total Questions Required: ${totalQuestions}
+Difficulty Level: ${difficultyLevel}
+Max Questions per Topic: ${maxQuestionsPerTopic}
 
-USER QUERY: "${userQuery}"
+Generate a topic breakdown following these rules:
+1. Create 3-5 relevant topics for this subject and exam
+2. Each topic should have at most ${maxQuestionsPerTopic} questions
+3. Distribute all ${totalQuestions} questions across topics exactly (sum must equal ${totalQuestions})
+4. For each topic, assign difficulty levels from: ["easy"], ["medium"], ["hard"], ["mix"], ["easy", "medium"], etc.
+5. Topics must be relevant to ${examTags.join(', ')} exam pattern
 
-SUBJECT: ${subject}
-LEVEL: ${level.toUpperCase()}
+Respond ONLY with valid JSON in this exact format:
+{
+  "topics": [
+    { "topicName": "Topic Name", "level": ["mix"], "noOfQuestions": 10 },
+    { "topicName": "Another Topic", "level": ["easy", "medium"], "noOfQuestions": 10 }
+  ]
+}`;
+}
 
-BLUEPRINT TOPICS TO COVER:
-${blueprintTopics.map((t, i) => `${i + 1}. ${t.topicName} (${t.questionCount} questions, priority: ${t.priority})`).join('\n')}
+/**
+ * Build batch question generation prompt
+ * Used by batchRunner to generate questions with patterns from research
+ */
+export function buildBatchQuestionPrompt(
+  topic: string,
+  context: string,
+  patterns: Record<string, string[]>,
+  noOfQuestions: number,
+  numberRanges: { min: number; max: number; decimals: boolean },
+  optionStyle: string,
+  avoid: string[],
+  includeExplanation: boolean
+): string {
+  const patternSections = Object.entries(patterns).map(([level, patternList]) => {
+    return `\n${level.toUpperCase()}:\n${patternList.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`;
+  }).join('\n');
 
-RESEARCH CONTEXT - WEB SEARCH (4 results):
-${webContext}
+  return `You are an expert question generator for competitive exams.
 
-RESEARCH CONTEXT - AWS KNOWLEDGE BASE (4 results):
-${kbContext}
+TOPIC: ${topic}
+CONTEXT: ${context}
 
-YOUR TASK:
-Create an array of refined prompts - ONE PROMPT PER BLUEPRINT TOPIC.
+DIFFICULTY LEVELS & PATTERNS:${patternSections}
 
-Each prompt must:
-1. Reference the specific topic
-2. Include only the MOST RELEVANT research details from above
-3. Specify the number of questions needed
-4. Include difficulty level
-5. Be optimized for LLM generation
+REQUIREMENTS:
+- Generate exactly ${noOfQuestions} questions
+- Distribute questions across all difficulty levels (${Object.keys(patterns).join(', ')})
+- Follow the patterns listed above for each difficulty level
+- Use number ranges: min=${numberRanges.min}, max=${numberRanges.max}, decimals=${numberRanges.decimals}
+- Option style: ${optionStyle}
+- Avoid: ${avoid.join(', ')}
+${includeExplanation ? '- Include detailed explanation for each question' : '- Do NOT include explanations'}
 
-OUTPUT FORMAT - RETURN VALID JSON ARRAY ONLY:
-[
-  {
-    "topicName": "Topic Name",
-    "questionCount": 5,
-    "difficulty": "intermediate",
-    "prompt": "Detailed prompt for generating questions on this topic with embedded research context...",
-    "researchSources": ["Web 1", "KB 2"],
-    "keywords": ["keyword1", "keyword2"]
-  },
-  // ... one object per blueprint topic
-]
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "questions": [
+    {
+      "question": "Full question text here",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+      "correctAnswer": "Option 2",${includeExplanation ? '\n      "explanation": "Detailed explanation here",' : ''}
+      "difficulty": "easy"
+    }
+  ]
+}
 
-RULES:
-- Each prompt object must have ALL fields above
-- Prompts should be concise but informative
-- Include specific research details (facts, concepts) from web/KB
-- Mark which research sources are used (e.g., "Web 1", "KB 2")
-- Topics in output must match blueprint topics exactly
-- Return ONLY valid JSON, no markdown, no explanations
+Generate ${noOfQuestions} high-quality questions now.`;
+}
 
-Respond with ONLY the JSON array.`;
+/**
+ * Build prompt refinement prompt for extracting question patterns from research
+ * Used by promptRefiner to analyze research and create structured prompts
+ */
+export function buildPromptRefinementPrompt(
+  examTags: string[],
+  subject: string,
+  topicName: string,
+  topicLevel: string[],
+  noOfQuestions: number,
+  researchContext: string
+): string {
+  const levelString = topicLevel.join(', ');
+  
+  return `You are an expert exam question pattern analyzer for ${examTags.join(', ')} exams.
+
+TASK: Analyze the research below and extract question patterns for the topic "${topicName}".
+
+TOPIC DETAILS:
+- Topic: ${topicName}
+- Subject: ${subject}
+- Exam: ${examTags.join(', ')}
+- Difficulty Levels Required: ${levelString}
+- Number of Questions: ${noOfQuestions}
+
+RESEARCH CONTEXT:
+${researchContext}
+
+INSTRUCTIONS:
+1. Extract specific question patterns from the research for each difficulty level: ${levelString}
+2. Each pattern should describe a type of question commonly asked
+3. Focus on calculation methods, problem types, and common variations
+4. Include 3-5 patterns per difficulty level
+5. Create a brief context summary (2-3 sentences) about what this topic covers in ${examTags.join(', ')}
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "topic": "${topicName}",
+  "prompt": {
+    "noOfQuestions": ${noOfQuestions},
+    "patterns": {
+${topicLevel.map(lvl => `      "${lvl}": ["pattern 1", "pattern 2", "pattern 3", "pattern 4", "pattern 5"]`).join(',\n')}
+    },
+    "numberRanges": {
+      "min": 1,
+      "max": 1000,
+      "decimals": false
+    },
+    "optionStyle": "${examTags[0]}",
+    "avoid": ["repetitive numbers", "same question structure", "obvious answers"],
+    "context": "Brief 2-3 sentence summary of what ${topicName} covers in ${examTags.join(', ')}"
+  }
+}
+
+Respond with ONLY the JSON object.`;
 }

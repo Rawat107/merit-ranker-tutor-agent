@@ -1,11 +1,17 @@
 import pino from 'pino';
 import { START, END, StateGraph, Annotation } from '@langchain/langgraph';
-import { Classification, Document } from '../types/index.js';
+import { 
+  Classification, 
+  Document, 
+  AssessmentCategory, 
+  AssessmentRequest,
+  EnrichedBlueprint,
+  GeneratedQuestionOutput
+} from '../types/index.js';
 import { createBlueprintGenerator } from './generator/blueprintGenerator.ts';
-import { webSearchTool } from '../tools/webSearch.ts';
-import { AWSKnowledgeBaseRetriever } from '../retriever/AwsKBRetriever.ts';
+import { createResearchBatchProcessor } from './generator/research.js';
 import { PromptRefiner } from './generator/promptRefiner.ts';
-import { QuestionBatchRunner, GeneratedQuestion } from './generator/batchRunner.ts';
+import { QuestionBatchRunner } from './generator/batchRunner.ts';
 
 /**
  * Pipeline:
@@ -20,6 +26,14 @@ const EducatorAgentAnnotation = Annotation.Root({
   }),
   classification: Annotation<Classification>({
     reducer: (x, y) => y ?? x,
+  }),
+  assessmentCategory: Annotation<AssessmentCategory>({
+    reducer: (x, y) => y ?? x,
+    default: () => 'quiz' as AssessmentCategory,
+  }),
+  assessmentRequest: Annotation<AssessmentRequest | null>({
+    reducer: (x, y) => y ?? x,
+    default: () => null,
   }),
   blueprint: Annotation<any>({
     reducer: (x, y) => y ?? x,
@@ -37,7 +51,7 @@ const EducatorAgentAnnotation = Annotation.Root({
     reducer: (x, y) => y ?? x,
     default: () => [],
   }),
-  generatedQuestions: Annotation<GeneratedQuestion[]>({
+  generatedQuestions: Annotation<GeneratedQuestionOutput[]>({
     reducer: (x, y) => y ?? x,
     default: () => [],
   }),
@@ -56,7 +70,7 @@ export type EducatorAgentState = typeof EducatorAgentAnnotation.State;
 
 export class EducatorAgent {
   private blueprintGenerator: any;
-  private kbRetriever: AWSKnowledgeBaseRetriever;
+  private researchProcessor: any;
   private promptRefiner: PromptRefiner;
   private questionBatchRunner: QuestionBatchRunner;
   private graph: any;
@@ -65,7 +79,7 @@ export class EducatorAgent {
   constructor(logger: pino.Logger) {
     this.logger = logger;
     this.blueprintGenerator = createBlueprintGenerator(logger);
-    this.kbRetriever = new AWSKnowledgeBaseRetriever(logger);
+    this.researchProcessor = createResearchBatchProcessor(logger);
     this.promptRefiner = new PromptRefiner(logger);
     this.questionBatchRunner = new QuestionBatchRunner(logger);
     this.graph = this.buildGraph();
@@ -93,8 +107,8 @@ export class EducatorAgent {
 
   /**
    * NODE: Blueprint Generation
-   * Input: userQuery + classification
-   * Output: blueprint with topics, model selection, strategy
+   * Input: assessmentRequest + classification
+   * Output: blueprint in standardized format
    */
   private async blueprintNode(
     state: EducatorAgentState
@@ -102,14 +116,31 @@ export class EducatorAgent {
     const startTime = Date.now();
 
     this.logger.info(
-      { step: 'blueprint', query: state.userQuery.substring(0, 60) },
+      { step: 'blueprint' },
       '[Educator Agent] Starting blueprint generation'
     );
 
     try {
+      // Extract request from state (added in executeFromRequest) or create from userQuery
+      let request = state.assessmentRequest;
+      
+      if (!request && state.userQuery) {
+        // Fallback: create basic request from userQuery
+        // Try to extract question count from the query
+        const match = state.userQuery.match(/(\d+)\s+questions?/i);
+        const questionCount = match ? parseInt(match[1], 10) : 20;
+        
+        request = {
+          examTags: ['General'],
+          subject: state.classification.subject || 'General',
+          totalQuestions: questionCount,
+        };
+      }
+      
       const blueprint = await this.blueprintGenerator.generateBlueprint(
-        state.userQuery,
-        state.classification
+        request,
+        state.classification,
+        state.assessmentCategory
       );
 
       const duration = Date.now() - startTime;
@@ -124,7 +155,7 @@ export class EducatorAgent {
             metadata: {
               duration,
               topics: blueprint.topics.length,
-              model: blueprint.selectedModel.name,
+              totalQuestions: blueprint.totalQuestions,
             },
           },
         ],
@@ -148,55 +179,61 @@ export class EducatorAgent {
   }
 
   /**
-   * NODE: Research (Parallel execution)
-   * Input: userQuery, classification
-   * Output: webSearchResults + kbResults (fetched in parallel)
+   * NODE: Research (Parallel batch execution per topic)
+   * Input: blueprint with topics
+   * Output: enriched blueprint with web1-3 and kb1-3 per topic
    */
   private async researchNode(
     state: EducatorAgentState
   ): Promise<Partial<EducatorAgentState>> {
     const startTime = Date.now();
 
+    if (!state.blueprint) {
+      this.logger.error('[Educator Agent] Blueprint is missing for research');
+      return {
+        stepLogs: [
+          ...state.stepLogs,
+          {
+            step: 'research',
+            status: 'failed',
+            error: 'Blueprint not found',
+          },
+        ],
+      };
+    }
+
     this.logger.info(
-      { step: 'research', query: state.userQuery.substring(0, 60) },
-      '[Educator Agent] Starting parallel research'
+      { step: 'research', topicsCount: state.blueprint.topics.length },
+      '[Educator Agent] Starting parallel research for all topics'
     );
 
     try {
-      // Run both in parallel
-      const [webResults, kbResults] = await Promise.all([
-        webSearchTool(
-          state.userQuery,
-          state.classification.subject,
-          process.env.TAVILY_API_KEY || '',
-          this.logger
-        ),
-        this.kbRetriever.getRelevantDocuments(state.userQuery, {
-          subject: state.classification.subject,
-          level: state.classification.level,
-          k: 4,
-        }),
-      ]);
-
-      // Take top 4 from each
-      const topWebResults = webResults.slice(0, 4);
-      const topKbResults = kbResults.slice(0, 4);
+      // Enrich blueprint with research results for each topic
+      const enrichedBlueprint = await this.researchProcessor.enrichBlueprint(
+        state.blueprint,
+        state.classification,
+        5 // maxConcurrency for parallel research
+      );
 
       const duration = Date.now() - startTime;
+
+      // Count successful research results
+      const topicsWithWeb = enrichedBlueprint.topics.filter((t: any) => t.web1).length;
+      const topicsWithKB = enrichedBlueprint.topics.filter((t: any) => t.kb1).length;
 
       this.logger.info(
         {
           step: 'research',
-          webCount: topWebResults.length,
-          kbCount: topKbResults.length,
+          topicsCount: enrichedBlueprint.topics.length,
+          topicsWithWeb,
+          topicsWithKB,
           duration,
         },
         '[Educator Agent] Research complete'
       );
 
       return {
-        webSearchResults: topWebResults,
-        kbResults: topKbResults,
+        blueprint: enrichedBlueprint, // Replace blueprint with enriched version
         stepLogs: [
           ...state.stepLogs,
           {
@@ -204,8 +241,9 @@ export class EducatorAgent {
             status: 'completed',
             metadata: {
               duration,
-              webSearchCount: topWebResults.length,
-              kbCount: topKbResults.length,
+              topicsCount: enrichedBlueprint.topics.length,
+              topicsWithWeb,
+              topicsWithKB,
             },
           },
         ],
@@ -256,20 +294,17 @@ export class EducatorAgent {
       {
         step: 'promptRefinement',
         topics: state.blueprint.topics.length,
-        webResults: state.webSearchResults.length,
-        kbResults: state.kbResults.length,
       },
-      '[Educator Agent] Starting prompt refinement'
+      '[Educator Agent] Starting prompt refinement with enriched topics'
     );
 
     try {
       const refinedPrompts = await this.promptRefiner.refinePrompts(
-        state.userQuery,
-        state.blueprint.topics,
-        state.webSearchResults,
-        state.kbResults,
-        state.classification.subject,
-        state.classification.level
+        state.blueprint.topics, // Already enriched with research from researchNode
+        state.blueprint.examTags,
+        state.blueprint.subject,
+        state.classification,
+        5 // maxConcurrency for parallel prompt refinement
       );
 
       const duration = Date.now() - startTime;
@@ -343,7 +378,6 @@ export class EducatorAgent {
       {
         step: 'questionGeneration',
         prompts: state.refinedPrompts.length,
-        model: state.blueprint.selectedModel.name,
       },
       '[Educator Agent] Starting batch question generation'
     );
@@ -351,8 +385,8 @@ export class EducatorAgent {
     try {
       const result = await this.questionBatchRunner.runBatch(
         state.refinedPrompts,
-        state.blueprint.selectedModel,
-        state.classification.level,
+        state.assessmentCategory,
+        state.classification,
         5 // max concurrency
       );
 
@@ -385,7 +419,7 @@ export class EducatorAgent {
               successCount: result.successCount,
               errorCount: result.errorCount,
               topics: result.items.map((i) => ({
-                topic: i.topicName,
+                topic: i.topic,
                 questions: i.questions.length,
               })),
             },
@@ -416,11 +450,14 @@ export class EducatorAgent {
    */
   async execute(
     userQuery: string,
-    classification: Classification
+    classification: Classification,
+    assessmentCategory: AssessmentCategory = 'quiz'
   ): Promise<EducatorAgentState> {
     const initialState: EducatorAgentState = {
       userQuery,
       classification,
+      assessmentCategory,
+      assessmentRequest: null,
       blueprint: null,
       webSearchResults: [],
       kbResults: [],
@@ -440,6 +477,69 @@ export class EducatorAgent {
       this.logger.info(
         {
           query: userQuery.substring(0, 60),
+          blueprint: result.blueprint?.topics.length || 0,
+          research: `${result.webSearchResults.length} web + ${result.kbResults.length} kb`,
+          prompts: result.refinedPrompts.length,
+          questions: result.generatedQuestions.length,
+        },
+        '[Educator Agent] ✅ Pipeline complete'
+      );
+
+      return result as EducatorAgentState;
+    } catch (error) {
+      this.logger.error({ error }, '[Educator Agent] Pipeline execution failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Execute from standardized request format
+   * Handles both cases: topics provided or auto-generated
+   */
+  async executeFromRequest(
+    request: AssessmentRequest,
+    classification: Classification
+  ): Promise<EducatorAgentState> {
+    // Build a query string for the pipeline
+    const query = `Generate ${request.totalQuestions} questions on ${request.subject} for ${request.examTags.join(', ')}`;
+    
+    // For now, use 'quiz' as default - we'll enhance this later
+    const assessmentCategory: AssessmentCategory = 'quiz';
+
+    this.logger.info(
+      { 
+        examTags: request.examTags, 
+        subject: request.subject, 
+        totalQuestions: request.totalQuestions,
+        topicsProvided: request.topics?.length || 0
+      },
+      '[Educator Agent] Starting pipeline with standardized request'
+    );
+
+    const initialState: any = {
+      userQuery: query,
+      classification,
+      assessmentCategory,
+      assessmentRequest: request, // Pass request through state
+      blueprint: null,
+      webSearchResults: [],
+      kbResults: [],
+      refinedPrompts: [],
+      generatedQuestions: [],
+      stepLogs: [],
+    };
+
+    this.logger.info(
+      { query: query.substring(0, 60) },
+      '[Educator Agent] Starting pipeline execution'
+    );
+
+    try {
+      const result = await this.graph.invoke(initialState);
+
+      this.logger.info(
+        {
+          query: query.substring(0, 60),
           blueprint: result.blueprint?.topics.length || 0,
           research: `${result.webSearchResults.length} web + ${result.kbResults.length} kb`,
           prompts: result.refinedPrompts.length,

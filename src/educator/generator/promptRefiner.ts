@@ -1,239 +1,287 @@
 import pino from 'pino';
-import { z } from 'zod';
-import { modelConfigService } from '../../config/modelConfig.ts';
-import { buildPromptRefinementPrompt } from '../../utils/promptTemplates.ts';
-import { createTierLLM } from '../../llm/tierLLM.ts';
-import { Document } from '../../types/index.js';
+import { RunnableLambda } from '@langchain/core/runnables';
+import { modelConfigService } from '../../config/modelConfig.js';
+import { createTierLLM } from '../../llm/tierLLM.js';
+import { buildPromptRefinementPrompt } from '../../utils/promptTemplates.js';
+import type { EnrichedTopic, RefinedPrompt } from '../../types/index.js';
 
 /**
  * PROMPT REFINER
- * Second model in the pipeline
+ * Processes enriched topics from research and generates structured prompts
  * 
- * Input: blueprint topics + research (web + KB)
- * Output: array of refined prompts per topic
- * 
- * Uses: Claude Sonnet 3.5 (intermediate level)
- * Job: Take blueprint + research and create context-aware prompts
+ * Input: Enriched topics with research (web + KB results)
+ * Output: Array of refined prompts with patterns per difficulty level
  */
-
-const RefinedPromptSchema = z.object({
-  topicName: z.string(),
-  questionCount: z.number().min(1),
-  difficulty: z.enum(['basic', 'intermediate', 'advanced']),
-  prompt: z.string(),
-  researchSources: z.array(z.string()),
-  keywords: z.array(z.string()),
-});
-
-export type RefinedPrompt = z.infer<typeof RefinedPromptSchema>;
 
 export class PromptRefiner {
   constructor(private logger: pino.Logger) {}
 
   /**
-   * Main method: Refine prompts using research context
+   * Main entry point: Process all enriched topics in batch
    */
   async refinePrompts(
-    userQuery: string,
-    blueprintTopics: Array<{
-      topicName: string;
-      description: string;
-      difficulty: 'basic' | 'intermediate' | 'advanced';
-      questionCount: number;
-      priority: 'high' | 'medium' | 'low';
-    }>,
-    webSearchResults: Document[],
-    awsKbResults: Document[],
+    enrichedTopics: EnrichedTopic[],
+    examTags: string[],
     subject: string,
-    level: 'basic' | 'intermediate' | 'advanced'
+    classification: { level: string },
+    maxConcurrency = 5
   ): Promise<RefinedPrompt[]> {
-    try {
-      this.logger.info(
-        {
-          topics: blueprintTopics.length,
-          webResults: webSearchResults.length,
-          kbResults: awsKbResults.length,
-          subject,
-          level,
-        },
-        '[PromptRefiner] Starting prompt refinement'
-      );
+    const startTime = Date.now();
 
-      // STEP 1: Get prompt_refinement config (only intermediate level)
-      const refinementConfig = modelConfigService.getModelConfig(
-        { subject: 'prompt_refinement', level: 'intermediate', confidence: 0.9 },
-        'free'
-      );
-
-      const modelRegistry = modelConfigService.getModelRegistryEntry(
-        refinementConfig.modelId
-      );
-
-      if (!modelRegistry) {
-        throw new Error(
-          `Model registry not found for ${refinementConfig.modelId}`
-        );
-      }
-
-      this.logger.debug(
-        {
-          modelId: refinementConfig.modelId,
-          temperature: refinementConfig.temperature,
-          maxTokens: refinementConfig.maxTokens,
-        },
-        '[PromptRefiner] Model config retrieved'
-      );
-
-      // STEP 2: Create LLM instance (always intermediate)
-      const llm = createTierLLM(
-        'intermediate',
-        modelRegistry,
-        this.logger,
-        refinementConfig.temperature,
-        refinementConfig.maxTokens
-      );
-
-      this.logger.debug(
-        { modelInfo: llm.getModelInfo() },
-        '[PromptRefiner] LLM instance created'
-      );
-
-      // STEP 3: Build refinement prompt with research context
-      const refinementPrompt = buildPromptRefinementPrompt(
-        userQuery,
-        blueprintTopics,
-        webSearchResults.map((d) => ({
-          text: d.text,
-          url: (d.metadata?.url as string) || undefined,
-        })),
-        awsKbResults.map((d) => ({
-          text: d.text,
-          source: (d.metadata?.source as string) || undefined,
-        })),
+    this.logger.info(
+      {
+        topicsCount: enrichedTopics.length,
+        topicNames: enrichedTopics.map(t => t.topicName),
+        examTags,
         subject,
-        level
+        maxConcurrency,
+      },
+      '[PromptRefiner] Starting batch prompt refinement using .batch()'
+    );
+
+    try {
+      // Create runnable for batch processing
+      const runnableRefiner = RunnableLambda.from(async (topic: EnrichedTopic) => {
+        return await this.refineSingleTopic(topic, examTags, subject, classification);
+      });
+
+      // Process all topics with maxConcurrency control
+      const refinedPrompts = await runnableRefiner.batch(
+        enrichedTopics,
+        { maxConcurrency }
       );
 
-      this.logger.debug(
-        { promptLength: refinementPrompt.length },
-        '[PromptRefiner] Refinement prompt built'
-      );
-
-      // STEP 4: Call LLM to refine prompts
-      const refinedJson = await llm.generate(refinementPrompt);
-
-      this.logger.debug(
-        { responseLength: refinedJson.length },
-        '[PromptRefiner] LLM generated refined prompts'
-      );
-
-      // STEP 5: Parse JSON response
-      let parsedRefinedPrompts: any[];
-      try {
-        parsedRefinedPrompts = JSON.parse(refinedJson);
-
-        // Ensure it's an array
-        if (!Array.isArray(parsedRefinedPrompts)) {
-          parsedRefinedPrompts = [parsedRefinedPrompts];
-        }
-      } catch (parseError) {
-        this.logger.warn(
-          { error: parseError, response: refinedJson.substring(0, 200) },
-          '[PromptRefiner] Failed to parse LLM response, using fallback'
-        );
-        parsedRefinedPrompts = this.fallbackRefinedPrompts(
-          blueprintTopics,
-          webSearchResults,
-          awsKbResults
-        );
-      }
-
-      // STEP 6: Validate and enhance each prompt
-      const refinedPrompts: RefinedPrompt[] = parsedRefinedPrompts
-        .map((p: any) => {
-          try {
-            // Validate structure
-            return RefinedPromptSchema.parse({
-              topicName: p.topicName || 'Unknown Topic',
-              questionCount: p.questionCount || 5,
-              difficulty: p.difficulty || level,
-              prompt: p.prompt || 'Generate questions on this topic',
-              researchSources: p.researchSources || [],
-              keywords: p.keywords || [],
-            });
-          } catch (validationError) {
-            this.logger.warn(
-              { error: validationError, prompt: p },
-              '[PromptRefiner] Validation failed for prompt, using enhanced version'
-            );
-            return {
-              topicName: p.topicName || 'Unknown Topic',
-              questionCount: p.questionCount || 5,
-              difficulty: level,
-              prompt:
-                p.prompt ||
-                `Generate ${p.questionCount || 5} questions on ${p.topicName || 'this topic'}`,
-              researchSources: p.researchSources || ['web', 'kb'],
-              keywords: p.keywords || [],
-            };
-          }
-        })
-        .filter((p) => p !== null);
+      const duration = Date.now() - startTime;
 
       this.logger.info(
         {
-          refinedCount: refinedPrompts.length,
-          topicsCovered: refinedPrompts.map((p) => p.topicName),
+          promptsGenerated: refinedPrompts.length,
+          topicNamesProcessed: refinedPrompts.map(p => p.topic),
+          duration,
         },
-        '[PromptRefiner] ✅ Prompt refinement complete'
+        '[PromptRefiner] ✅ Batch refinement complete'
       );
 
       return refinedPrompts;
     } catch (error) {
-      this.logger.error({ error }, '[PromptRefiner] ❌ Prompt refinement failed');
+      this.logger.error({ error }, '[PromptRefiner] ❌ Batch refinement failed');
       throw error;
     }
   }
 
   /**
-   * Fallback: Generate refined prompts heuristically
+   * Refine a single topic with LLM-based pattern extraction
    */
-  private fallbackRefinedPrompts(
-    blueprintTopics: Array<{
-      topicName: string;
-      description: string;
-      difficulty: string;
-      questionCount: number;
-      priority: string;
-    }>,
-    webSearchResults: Document[],
-    awsKbResults: Document[]
-  ): RefinedPrompt[] {
+  private async refineSingleTopic(
+    topic: EnrichedTopic,
+    examTags: string[],
+    subject: string,
+    classification: { level: string }
+  ): Promise<RefinedPrompt> {
+    const startTime = Date.now();
+
     this.logger.info(
-      '[PromptRefiner] Using fallback refined prompts generation'
+      { topicName: topic.topicName, levels: topic.level },
+      '[PromptRefiner] Processing topic'
     );
 
-    return blueprintTopics.map((topic, index) => {
-      // Select research items for this topic
-      const webSource =
-        webSearchResults[index % webSearchResults.length]?.metadata?.url ||
-        'web-search';
-      const kbSource =
-        awsKbResults[index % awsKbResults.length]?.metadata?.source ||
-        'knowledge-base';
+    try {
+      // Get LLM for pattern extraction
+      const modelConfig = modelConfigService.getModelConfig(
+        { subject: 'prompt_refinement', level: 'intermediate', confidence: 0.9 },
+        'free'
+      );
 
-      return {
-        topicName: topic.topicName,
-        questionCount: topic.questionCount,
-        difficulty: topic.difficulty as 'basic' | 'intermediate' | 'advanced',
-        prompt: `Generate ${topic.questionCount} ${topic.difficulty} level questions on "${topic.topicName}". ${topic.description}`,
-        researchSources: [webSource, kbSource],
-        keywords: topic.topicName
-          .toLowerCase()
-          .split(' ')
-          .slice(0, 3),
-      };
+      const modelRegistry = modelConfigService.getModelRegistryEntry(
+        modelConfig.modelId
+      );
+
+      if (!modelRegistry) {
+        throw new Error(`Model registry not found for ${modelConfig.modelId}`);
+      }
+
+      const llm = createTierLLM(
+        'intermediate',
+        modelRegistry,
+        this.logger,
+        0.3, // Low temperature for consistent pattern extraction
+        2048
+      );
+
+      // Build context from research
+      const researchContext = this.buildResearchContext(topic);
+
+      // Build prompt for LLM to extract patterns
+      const extractionPrompt = this.buildPatternExtractionPrompt(
+        topic,
+        examTags,
+        subject,
+        researchContext
+      );
+
+      // Call LLM
+      const response = await llm.generate(extractionPrompt);
+
+      // Parse response
+      const parsed = this.parsePatternResponse(response, topic, examTags);
+
+      const duration = Date.now() - startTime;
+
+      this.logger.info(
+        {
+          topicName: topic.topicName,
+          patternsExtracted: Object.values(parsed.prompt.patterns).flat().length,
+          duration,
+        },
+        '[PromptRefiner] Topic refined'
+      );
+
+      return parsed;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        { 
+          topicName: topic.topicName, 
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          duration 
+        },
+        '[PromptRefiner] Topic refinement failed, using fallback'
+      );
+
+      // Return fallback prompt
+      return this.createFallbackPrompt(topic, examTags, subject);
+    }
+  }
+
+  /**
+   * Build research context summary from web and KB results
+   */
+  private buildResearchContext(topic: EnrichedTopic): string {
+    const parts: string[] = [];
+
+    // Add web results
+    if (topic.research.web && topic.research.web.length > 0) {
+      parts.push('WEB RESEARCH:');
+      topic.research.web.forEach((doc, i) => {
+        if (doc && doc.text) {
+          parts.push(`[${i + 1}] ${doc.text.substring(0, 300)}...`);
+        }
+      });
+    }
+
+    // Add KB results
+    if (topic.research.kb && topic.research.kb.length > 0) {
+      parts.push('\nKNOWLEDGE BASE:');
+      topic.research.kb.forEach((doc, i) => {
+        if (doc && doc.text) {
+          parts.push(`[${i + 1}] ${doc.text.substring(0, 300)}...`);
+        }
+      });
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Build LLM prompt for pattern extraction
+   */
+  private buildPatternExtractionPrompt(
+    topic: EnrichedTopic,
+    examTags: string[],
+    subject: string,
+    researchContext: string
+  ): string {
+    return buildPromptRefinementPrompt(
+      examTags,
+      subject,
+      topic.topicName,
+      topic.level,
+      topic.noOfQuestions,
+      researchContext
+    );
+  }
+
+  /**
+   * Parse LLM response into RefinedPrompt
+   */
+  private parsePatternResponse(response: string, topic: EnrichedTopic, examTags: string[]): RefinedPrompt {
+    try {
+      // Remove markdown code blocks if present
+      let cleaned = response.trim();
+      if (cleaned.startsWith('```json')) {
+        cleaned = cleaned.substring(7);
+      }
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.substring(3);
+      }
+      if (cleaned.endsWith('```')) {
+        cleaned = cleaned.substring(0, cleaned.length - 3);
+      }
+      cleaned = cleaned.trim();
+
+      const parsed = JSON.parse(cleaned);
+
+      // Validate structure
+      if (!parsed.prompt || !parsed.prompt.patterns) {
+        throw new Error('Invalid response structure');
+      }
+
+      // CRITICAL: Force the original topic name (LLM sometimes changes it)
+      parsed.topic = topic.topicName;
+
+      return parsed;
+    } catch (error) {
+      this.logger.warn(
+        { topicName: topic.topicName, error, response: response.substring(0, 200) },
+        '[PromptRefiner] Failed to parse LLM response, using fallback'
+      );
+
+      return this.createFallbackPrompt(topic, examTags, '');
+    }
+  }
+
+  /**
+   * Create fallback prompt when LLM fails
+   */
+  private createFallbackPrompt(
+    topic: EnrichedTopic,
+    examTags: string[],
+    subject: string
+  ): RefinedPrompt {
+    this.logger.info(
+      { topicName: topic.topicName },
+      '[PromptRefiner] Using fallback prompt generation'
+    );
+
+    // Create basic patterns for each level
+    const patterns: { [key: string]: string[] } = {};
+    
+    topic.level.forEach(lvl => {
+      patterns[lvl] = [
+        `Calculate ${topic.topicName} with basic formulas`,
+        `Solve ${topic.topicName} word problems`,
+        `Apply ${topic.topicName} concepts to real scenarios`,
+        `${topic.topicName} with multiple steps`,
+        `Mixed ${topic.topicName} problems`,
+      ];
     });
+
+    return {
+      topic: topic.topicName,
+      prompt: {
+        noOfQuestions: topic.noOfQuestions,
+        patterns,
+        numberRanges: {
+          min: 1,
+          max: 1000,
+          decimals: false,
+        },
+        optionStyle: examTags[0] || 'standard',
+        avoid: ['repetitive numbers', 'same phrasing', 'obvious patterns'],
+        context: `Generate ${topic.noOfQuestions} questions on ${topic.topicName} covering fundamental concepts and applications.`,
+      },
+    };
   }
 }
 

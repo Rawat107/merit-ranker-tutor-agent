@@ -114,6 +114,67 @@ export interface ClassificationWithIntent extends Classification {
   expectedFormat?: string;
 }
 
+/**
+ * Assessment Types and Schemas
+ * Used by blueprintGenerator, promptRefiner, batchRunner for quiz, mock_test, test_series
+ */
+export type AssessmentCategory = 'quiz' | 'mock_test' | 'test_series';
+export type AssessmentDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
+export type TopicLevel = 'easy' | 'medium' | 'hard' | 'mix';
+
+export interface TopicRequest {
+  topicName: string;
+  level: TopicLevel[];
+  noOfQuestions: number;
+}
+
+export interface AssessmentRequest {
+  examTags: string[];
+  subject: string;
+  totalQuestions: number;
+  topics?: TopicRequest[];
+  userId?: string;
+}
+
+export interface AssessmentQuestion {
+  questionId: string;
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation?: string; // Not included for test_series
+  marks?: number;
+  negativeMarks?: number;
+  section?: string;
+  difficulty: 'basic' | 'intermediate' | 'advanced';
+  topic: string;
+  subject?: string;
+  format?: 'standard' | 'math' | 'science' | 'reasoning' | 'diagram';
+}
+
+export interface AssessmentSection {
+  name: string;
+  questionCount: number;
+  marks?: number;
+  time?: number;
+}
+
+export interface AssessmentResponse {
+  success: boolean;
+  assessmentId: string;
+  name: string;
+  category: AssessmentCategory;
+  subject: string;
+  topic?: string;
+  difficulty: AssessmentDifficulty;
+  exams?: string[];
+  totalQuestions: number;
+  durationMinutes?: number;
+  sections?: AssessmentSection[];
+  questions: AssessmentQuestion[];
+  explanationsIncluded: boolean;
+  meta?: Record<string, any>;
+}
+
 export interface SlideOutlineRequest {
   title: string;
   description?: string;
@@ -173,3 +234,110 @@ export interface PresentationFinalResponse {
 export { BaseMessage } from '@langchain/core/messages';
 
 export * from '../compression/lingua_compressor';
+
+/**
+ * ============================================
+ * EDUCATOR MODULE INTERFACES
+ * ============================================
+ */
+
+/**
+ * Topic Validator Configuration and Results
+ */
+export interface ValidatorConfig {
+  maxQuestionsPerNewTopic?: number;
+  distributionStrategy?: "round-robin" | "priority" | "proportional";
+  allowBlueprintWhenTopicsProvided?: boolean;
+}
+
+export interface ValidationResult {
+  isValid: boolean;
+  action: "bypass_blueprint" | "generate_blueprint" | "adjust_topics";
+  topics: Array<{
+    topicName: string;
+    level: string[];
+    noOfQuestions: number;
+  }> | null;
+  reason: string;
+  metadata: Record<string, any>;
+}
+
+/**
+ * Research Module Interfaces
+ */
+export interface EnrichedTopic {
+  topicName: string;
+  level: string[];
+  noOfQuestions: number;
+  research: {
+    web: Document[];
+    kb: Document[];
+  };
+}
+
+export interface BlueprintInput {
+  examTags: string[];
+  subject: string;
+  totalQuestions: number;
+  topics: Array<{
+    topicName: string;
+    level: string[];
+    noOfQuestions: number;
+  }>;
+}
+
+export interface EnrichedBlueprint {
+  examTags: string[];
+  subject: string;
+  totalQuestions: number;
+  topics: EnrichedTopic[];
+}
+
+/**
+ * Prompt Refiner Interfaces
+ */
+export interface RefinedPrompt {
+  topic: string;
+  prompt: {
+    noOfQuestions: number;
+    patterns: {
+      [key: string]: string[]; // e.g., "easy": [...], "medium": [...], "hard": [...]
+    };
+    numberRanges: {
+      min: number;
+      max: number;
+      decimals: boolean;
+    };
+    optionStyle: string;
+    avoid: string[];
+    context: string; // Compressed summary from research
+  };
+}
+
+/**
+ * Batch Runner Interfaces
+ */
+export type GeneratedQuestion = AssessmentQuestion;
+
+export interface GeneratedQuestionOutput {
+  slotId: number;
+  q: string;
+  options: string[];
+  answer: number; // Index of correct option (1-based)
+  explanation?: string; // Optional, excluded for test_series
+}
+
+export interface QuestionBatchResultItem {
+  topic: string;
+  questions: GeneratedQuestionOutput[];
+  rawResponse?: string;
+  error?: string;
+}
+
+export interface QuestionBatchResult {
+  items: QuestionBatchResultItem[];
+  totalQuestions: number;
+  successCount: number;
+  errorCount: number;
+  duration: number;
+}

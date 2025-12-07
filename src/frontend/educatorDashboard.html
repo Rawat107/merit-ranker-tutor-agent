@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Educator Dashboard - AI Quiz Generator</title>
+    <!-- MathJax for LaTeX rendering -->
+    <!-- Polyfill removed: polyfill.io often fails/blocked. If needed, add a stable CDN like core-js bundle. -->
+    <script
+      id="MathJax-script"
+      async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    ></script>
+    <!-- Mermaid for diagram rendering -->
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "default" });
+      window.mermaid = mermaid;
+    </script>
     <style>
       * {
         margin: 0;
@@ -267,6 +280,50 @@
         color: #555;
       }
 
+      .mermaid-diagram {
+        margin: 15px 0;
+        padding: 15px;
+        background: #f9f9f9;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        overflow-x: auto;
+      }
+
+      .latex-display {
+        margin: 15px 0;
+        padding: 15px;
+        background: #f0f4ff;
+        border-radius: 8px;
+        border-left: 3px solid #667eea;
+        font-size: 1.1rem;
+        text-align: center;
+        overflow-x: auto;
+      }
+
+      .reasoning-chain {
+        margin: 12px 0;
+        padding: 12px;
+        background: #e3f2fd;
+        border-radius: 6px;
+        border-left: 3px solid #2196f3;
+      }
+
+      .reasoning-chain ol {
+        margin: 8px 0 0 20px;
+      }
+
+      .reasoning-chain li {
+        margin: 6px 0;
+        color: #555;
+      }
+
+      .question-format {
+        margin-top: 10px;
+        text-align: right;
+        color: #999;
+        font-style: italic;
+      }
+
       .metadata-bar {
         display: flex;
         justify-content: space-between;
@@ -363,43 +420,114 @@
 
       <!-- Query Input Card -->
       <div class="card">
-        <h2>✨ Generate Quiz</h2>
+        <h2>✨ Generate Assessment</h2>
+
+        <!-- Exam Tag Selection -->
         <div class="query-section">
           <div class="query-input-wrapper">
-            <label for="queryInput">What would you like to generate?</label>
+            <label for="examTag">Exam Tag</label>
+            <select
+              id="examTag"
+              style="
+                padding: 14px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 1rem;
+              "
+            >
+              <option value="SSC_CGL_Tier1">SSC CGL Tier 1</option>
+              <option value="SSC_CGL_Tier2">SSC CGL Tier 2</option>
+              <option value="UPSC_CSAT">UPSC CSAT</option>
+              <option value="GATE_CS">GATE CS</option>
+              <option value="CAT">CAT</option>
+              <option value="JEE_MAIN">JEE Main</option>
+              <option value="NEET">NEET</option>
+              <option value="Other">Other (specify in subject)</option>
+            </select>
+          </div>
+          <div class="query-input-wrapper">
+            <label for="subject">Subject</label>
             <input
               type="text"
-              id="queryInput"
-              placeholder="e.g., Generate 10 questions about Python Data Structures"
-              value="Generate 10 questions about Quantum Computing"
+              id="subject"
+              placeholder="e.g., Quantitative Aptitude"
+              value="Quantitative Aptitude"
+              style="
+                padding: 14px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 1rem;
+                width: 100%;
+              "
             />
           </div>
-          <button id="generateBtn">Generate</button>
+          <div class="query-input-wrapper">
+            <label for="totalQuestions">Total Questions</label>
+            <input
+              type="number"
+              id="totalQuestions"
+              value="30"
+              min="1"
+              max="150"
+              style="
+                padding: 14px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 1rem;
+                width: 100%;
+              "
+            />
+          </div>
         </div>
 
-        <div class="example-queries">
-          <p>💡 Example queries:</p>
-          <button
-            onclick="setQuery('Generate 15 questions about Machine Learning basics')"
+        <!-- Topics Section -->
+        <div style="margin: 20px 0">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 15px;
+            "
           >
-            ML Basics
-          </button>
-          <button
-            onclick="setQuery('Create 20 advanced questions on React Hooks')"
-          >
-            React Hooks
-          </button>
-          <button
-            onclick="setQuery('Generate 10 intermediate questions about Database Normalization')"
-          >
-            Database
-          </button>
-          <button
-            onclick="setQuery('Create 12 questions on Cloud Computing fundamentals')"
-          >
-            Cloud Computing
-          </button>
+            <label style="font-weight: 600; font-size: 1rem; color: #555"
+              >Topics (Optional - leave empty to auto-generate)</label
+            >
+            <button
+              id="addTopicBtn"
+              style="
+                padding: 8px 16px;
+                background: #667eea;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.9rem;
+              "
+            >
+              + Add Topic
+            </button>
+          </div>
+          <div id="topicsContainer"></div>
         </div>
+
+        <button
+          id="generateBtn"
+          style="
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+          "
+        >
+          Generate Assessment
+        </button>
       </div>
 
       <!-- Status Card -->
@@ -438,27 +566,123 @@
 
     <script>
       let startTime = null;
-      const API_BASE = "/api/educator";
+
+      function resolveApiBase() {
+        const origin = window.location.origin;
+        const isStaticPreview =
+          origin.startsWith("file:") ||
+          origin.includes("127.0.0.1:5500") ||
+          origin.includes("localhost:5500");
+
+        // If opened via a static preview (e.g., VS Code Live Server on :5500),
+        // forward requests to the backend dev server.
+        if (isStaticPreview) {
+          return "http://localhost:3000/api/educator";
+        }
+
+        // Default: same origin as the served page.
+        return `${origin}/api/educator`;
+      }
+
+      const API_BASE = resolveApiBase();
+
+      let topicCount = 0;
 
       document
         .getElementById("generateBtn")
         .addEventListener("click", generateQuiz);
       document
-        .getElementById("queryInput")
-        .addEventListener("keypress", (e) => {
-          if (e.key === "Enter") generateQuiz();
+        .getElementById("addTopicBtn")
+        .addEventListener("click", addTopicRow);
+
+      function addTopicRow() {
+        topicCount++;
+        const container = document.getElementById("topicsContainer");
+        const topicRow = document.createElement("div");
+        topicRow.className = "topic-row";
+        topicRow.id = `topic-${topicCount}`;
+        topicRow.style.cssText =
+          "display: flex; gap: 10px; margin-bottom: 10px; padding: 15px; background: #f8f9ff; border-radius: 8px; border: 1px solid #e8ebff;";
+
+        topicRow.innerHTML = `
+          <div style="flex: 2;">
+            <input type="text" placeholder="Topic name (e.g., Profit & Loss)" class="topic-name"
+              style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 0.95rem;" />
+          </div>
+          <div style="flex: 1;">
+            <select class="topic-level" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 0.95rem;">
+              <option value="mix">Mix</option>
+              <option value="easy">Easy</option>
+              <option value="medium">Medium</option>
+              <option value="hard">Hard</option>
+              <option value="easy,medium">Easy + Medium</option>
+              <option value="medium,hard">Medium + Hard</option>
+            </select>
+          </div>
+          <div style="flex: 0.5;">
+            <input type="number" placeholder="Count" class="topic-count" value="10" min="1" max="50"
+              style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 0.95rem;" />
+          </div>
+          <button onclick="removeTopicRow(${topicCount})" style="padding: 10px 15px; background: #f44336; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">
+            ✕
+          </button>
+        `;
+
+        container.appendChild(topicRow);
+      }
+
+      function removeTopicRow(id) {
+        const row = document.getElementById(`topic-${id}`);
+        if (row) row.remove();
+      }
+
+      function getTopicsFromUI() {
+        const topics = [];
+        const rows = document.querySelectorAll(".topic-row");
+
+        rows.forEach((row) => {
+          const name = row.querySelector(".topic-name").value.trim();
+          const level = row.querySelector(".topic-level").value.split(",");
+          const count = parseInt(row.querySelector(".topic-count").value);
+
+          if (name && count > 0) {
+            topics.push({
+              topicName: name,
+              level: level,
+              noOfQuestions: count,
+            });
+          }
         });
 
-      function setQuery(query) {
-        document.getElementById("queryInput").value = query;
+        return topics;
       }
 
       async function generateQuiz() {
-        const query = document.getElementById("queryInput").value.trim();
-        if (!query) {
-          alert("Please enter a query");
+        const examTag = document.getElementById("examTag").value;
+        const subject = document.getElementById("subject").value.trim();
+        const totalQuestions = parseInt(
+          document.getElementById("totalQuestions").value
+        );
+        const topics = getTopicsFromUI();
+
+        if (!subject) {
+          alert("Please enter a subject");
           return;
         }
+
+        if (totalQuestions < 1 || totalQuestions > 150) {
+          alert("Total questions must be between 1 and 150");
+          return;
+        }
+
+        // Build request payload
+        const payload = {
+          examTags: [examTag],
+          subject: subject,
+          totalQuestions: totalQuestions,
+          topics: topics.length > 0 ? topics : undefined,
+          userId: "test-user",
+        };
 
         const btn = document.getElementById("generateBtn");
         const statusCard = document.getElementById("statusCard");
@@ -478,7 +702,7 @@
           const response = await fetch(`${API_BASE}/generate-stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query, userId: "test-user" }),
+            body: JSON.stringify(payload),
           });
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -608,6 +832,38 @@
             (q, idx) => `
         <div class="question-card">
           <div class="question-title">${idx + 1}. ${q.question}</div>
+          ${
+            q.mermaidDiagram
+              ? `
+            <div class="mermaid-diagram">
+              <pre class="mermaid">
+${q.mermaidDiagram}
+              </pre>
+            </div>
+          `
+              : ""
+          }
+          ${
+            q.latex
+              ? `
+            <div class="latex-display">
+              $$${q.latex}$$
+            </div>
+          `
+              : ""
+          }
+          ${
+            q.reasoningChain && q.reasoningChain.length > 0
+              ? `
+            <div class="reasoning-chain">
+              <strong>🧠 Reasoning:</strong>
+              <ol>
+                ${q.reasoningChain.map((step) => `<li>${step}</li>`).join("")}
+              </ol>
+            </div>
+          `
+              : ""
+          }
           <ul class="question-options">
             ${q.options
               .map(
@@ -626,10 +882,29 @@
           `
               : ""
           }
+          ${
+            q.format
+              ? `
+            <div class="question-format">
+              <small>Format: ${q.format}</small>
+            </div>
+          `
+              : ""
+          }
         </div>
       `
           )
           .join("");
+
+        // Re-render Mermaid diagrams after DOM update
+        if (window.mermaid) {
+          window.mermaid.run();
+        }
+
+        // Re-render MathJax after DOM update
+        if (window.MathJax) {
+          window.MathJax.typesetPromise();
+        }
       }
 
       function showStatus(message, type = "thinking") {

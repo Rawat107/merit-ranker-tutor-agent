@@ -4,7 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import FastifyAwsJwtVerify from 'fastify-aws-jwt-verify';
 import { appConfig, modelConfigService } from './config/modelConfig.js';
 import { createContainer } from './lib/container.js';
-import { ChatRequest, Classification, Document } from './types/index.js';
+import { ChatRequest, Classification, Document, AssessmentRequest } from './types/index.js';
 import { Classifier } from './classifier/Classifier.js';
 import { loadAllSecrets } from './lib/secrets.js';
 import pino from 'pino';
@@ -83,7 +83,9 @@ export async function createServer(): Promise<FastifyInstance> {
   });
 
   await server.register(cors, {
-    origin: appConfig.nodeEnv === 'development' ? true : ['http://localhost:3000'],
+    origin: appConfig.nodeEnv === 'development' 
+      ? ['http://localhost:3000', 'http://127.0.0.1:5500', 'http://localhost:5500']
+      : ['http://localhost:3000'],
     credentials: true,
   });
 
@@ -901,7 +903,7 @@ export async function createServer(): Promise<FastifyInstance> {
    * POST /api/educator/generate-stream
    * Streaming endpoint with real-time status updates (SSE)
    */
-  server.post<{ Body: { query: string; userId?: string } }>(
+  server.post<{ Body: AssessmentRequest }>(
     '/api/educator/generate-stream',
     // { onRequest: server.auth.require() }, // Commented for testing - uncomment for production
     educatorStreamHandler

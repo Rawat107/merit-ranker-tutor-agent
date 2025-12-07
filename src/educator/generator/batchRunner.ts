@@ -3,6 +3,17 @@ import { z } from 'zod';
 import { RunnableLambda } from '@langchain/core/runnables';
 import { modelConfigService } from '../../config/modelConfig.js';
 import { createTierLLM } from '../../llm/tierLLM.js';
+import { 
+  Classification, 
+  AssessmentCategory, 
+  AssessmentQuestion,
+  RefinedPrompt,
+  GeneratedQuestion,
+  GeneratedQuestionOutput,
+  QuestionBatchResultItem,
+  QuestionBatchResult
+} from '../../types/index.js';
+import { buildBatchQuestionPrompt, getResponseFormatByIntent } from '../../utils/promptTemplates.js';
 
 /**
  * QUESTION BATCH RUNNER (using LangChain .batch() method)
@@ -20,52 +31,41 @@ const QuestionSchema = z.object({
   question: z.string(),
   options: z.array(z.string()).optional(),
   correctAnswer: z.string(),
-  explanation: z.string(),
+  explanation: z.string().optional(),
   difficulty: z.enum(['basic', 'intermediate', 'advanced']),
   topic: z.string(),
 });
-
-export type GeneratedQuestion = z.infer<typeof QuestionSchema>;
-
-export interface RefinedPrompt {
-  topicName: string;
-  prompt: string;
-  questionCount: number;
-  difficulty: 'basic' | 'intermediate' | 'advanced';
-  keywords: string[];
-  researchSources: string[];
-}
-
-export interface QuestionBatchResultItem {
-  topicName: string;
-  questionCount: number;
-  questions: GeneratedQuestion[];
-  rawResponse: string;
-  error?: string;
-}
-
-export interface QuestionBatchResult {
-  items: QuestionBatchResultItem[];
-  totalQuestions: number;
-  successCount: number;
-  errorCount: number;
-  duration: number;
-}
 
 export class QuestionBatchRunner {
   constructor(private logger: pino.Logger) {}
 
   /**
+   * Build prompt for question generation using patterns per difficulty level
+   */
+  private buildQuestionGenerationPrompt(refinedPrompt: RefinedPrompt, includeExplanation: boolean): string {
+    const { topic, prompt } = refinedPrompt;
+    const { noOfQuestions, patterns, numberRanges, optionStyle, avoid, context } = prompt;
+
+    return buildBatchQuestionPrompt(
+      topic,
+      context,
+      patterns,
+      noOfQuestions,
+      numberRanges,
+      optionStyle,
+      avoid,
+      includeExplanation
+    );
+  }
+
+  /**
    * Run all refined prompts through LLM in parallel batches using LangChain .batch()
+   * Supports all assessment categories: quiz, mock_test, test_series
    */
   async runBatch(
     refinedPrompts: RefinedPrompt[],
-    selectedModel: {
-      modelId: string;
-      name: string;
-      temperature: number;
-    },
-    level: 'basic' | 'intermediate' | 'advanced',
+    assessmentCategory: AssessmentCategory = 'quiz',
+    classification?: Classification,
     maxConcurrency = 5
   ): Promise<QuestionBatchResult> {
     const startTime = Date.now();
@@ -84,54 +84,46 @@ export class QuestionBatchRunner {
     this.logger.info(
       {
         prompts: refinedPrompts.length,
-        model: selectedModel.name,
-        modelId: selectedModel.modelId,
+        topicNames: refinedPrompts.map(p => p.topic),
+        assessmentCategory,
         maxConcurrency,
       },
-      '[BatchRunner] Starting batch question generation using LangChain .batch()'
+      '[BatchRunner] Starting batch question generation with patterns'
     );
 
-    // Get model registry entry
-    const registryEntry = modelConfigService.getModelRegistryEntry(selectedModel.modelId);
+    // Get model config for question generation (intermediate tier)
+    const modelConfig = modelConfigService.getModelConfig(
+      { subject: 'question_generation', level: 'intermediate', confidence: 0.9 },
+      'free'
+    );
+
+    const registryEntry = modelConfigService.getModelRegistryEntry(modelConfig.modelId);
     if (!registryEntry) {
-      throw new Error(`Model registry entry not found for ${selectedModel.modelId}`);
+      throw new Error(`Model registry entry not found for ${modelConfig.modelId}`);
     }
 
-    // Create LLM instance for this tier
+    // Create LLM instance
     const llm = createTierLLM(
-      level,
+      'intermediate',
       registryEntry,
       this.logger,
-      selectedModel.temperature,
-      2048 // Higher token limit for question generation
+      modelConfig.temperature,
+      3072 // Higher token limit for question generation
     );
 
     // Wrap our LLM in a RunnableLambda to make it batch-compatible
     const runnableLLM = RunnableLambda.from(async (refinedPrompt: RefinedPrompt) => {
-      // The refined prompt already contains complete instructions like:
-      // "Generate 3 questions related to Python lists and tuples, covering..."
-      // We just need to append the JSON format requirement
-      const promptText = `${refinedPrompt.prompt}
-
-CRITICAL: Respond with ONLY valid JSON. No other text before or after.
-
-Format:
-{
-  "questions": [
-    {
-      "question": "Your question text?",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctAnswer": "Exact text of correct option",
-      "explanation": "Why this is correct"
-    }
-  ]
-}`;
-
+      const includeExplanation = assessmentCategory !== 'test_series';
+      const promptText = this.buildQuestionGenerationPrompt(refinedPrompt, includeExplanation);
       return await llm.generate(promptText);
     });
 
     this.logger.info(
-      { batchSize: refinedPrompts.length, maxConcurrency },
+      { 
+        batchSize: refinedPrompts.length, 
+        topicsToGenerate: refinedPrompts.map(p => `${p.topic} (${p.prompt.noOfQuestions}q)`),
+        maxConcurrency 
+      },
       '[BatchRunner] Executing .batch() with concurrent requests'
     );
 
@@ -153,15 +145,13 @@ Format:
         const errorMsg = (result && typeof result === 'object' && 'error' in result) ? String((result as any).error) : 'Unknown error';
         
         this.logger.error(
-          { error: errorMsg, topic: refinedPrompt.topicName },
+          { error: errorMsg, topic: refinedPrompt.topic },
           '[BatchRunner] Generation failed for topic'
         );
         
         items.push({
-          topicName: refinedPrompt.topicName,
-          questionCount: refinedPrompt.questionCount,
+          topic: refinedPrompt.topic,
           questions: [],
-          rawResponse: '',
           error: errorMsg,
         });
         continue;
@@ -170,8 +160,8 @@ Format:
       // Extract content from LLM response
       const rawResponse = typeof result === 'string' ? result : JSON.stringify(result);
 
-      // Parse JSON response with robust extraction
-      let questions: GeneratedQuestion[] = [];
+      // Parse JSON response
+      let questions: GeneratedQuestionOutput[] = [];
       try {
         let jsonText = rawResponse.trim();
         
@@ -194,45 +184,60 @@ Format:
         
         if (Array.isArray(questionsArray)) {
           questions = questionsArray
-            .map((q: any) => ({
-              question: q.question || q.q || '',
-              options: q.options || q.choices || [],
-              correctAnswer: q.correctAnswer || q.answer || q.correct || '',
-              explanation: q.explanation || q.exp || q.reason || '',
-              difficulty: refinedPrompt.difficulty,
-              topic: refinedPrompt.topicName,
-            }))
-            .filter((q) => q.question && q.options.length >= 2 && q.correctAnswer);
+            .map((q: any, idx: number) => {
+              const questionText = q.question || q.q || '';
+              const options = q.options || q.choices || [];
+              const correctAnswer = q.correctAnswer || q.answer || q.correct || '';
+              const explanation = q.explanation || q.exp || q.reason || '';
 
-          // Validate with Zod
-          questions = questions.filter((q) => {
-            try {
-              QuestionSchema.parse(q);
-              return true;
-            } catch {
-              return false;
-            }
-          });
+              // Convert answer to 1-based index
+              let answerIndex: number;
+              if (typeof correctAnswer === 'number') {
+                answerIndex = correctAnswer;
+              } else if (typeof correctAnswer === 'string') {
+                // Try to find matching option
+                const matchIndex = options.findIndex((opt: string) => 
+                  opt.toLowerCase().trim() === correctAnswer.toLowerCase().trim()
+                );
+                answerIndex = matchIndex >= 0 ? matchIndex + 1 : 1;
+              } else {
+                answerIndex = 1;
+              }
+
+              const output: GeneratedQuestionOutput = {
+                slotId: idx + 1,
+                q: questionText,
+                options: options,
+                answer: answerIndex,
+              };
+
+              // Add explanation only if not test_series
+              if (assessmentCategory !== 'test_series' && explanation) {
+                output.explanation = explanation;
+              }
+
+              return output;
+            })
+            .filter((q) => q.q && q.options.length >= 2);
         }
 
         this.logger.info(
           {
-            topic: refinedPrompt.topicName,
+            topic: refinedPrompt.topic,
             questionsGenerated: questions.length,
-            requestedCount: refinedPrompt.questionCount,
+            requestedCount: refinedPrompt.prompt.noOfQuestions,
           },
           '[BatchRunner] ✅ Generation complete for topic'
         );
       } catch (parseError) {
         this.logger.warn(
-          { error: parseError, topic: refinedPrompt.topicName, responsePreview: rawResponse.substring(0, 300) },
+          { error: parseError, topic: refinedPrompt.topic, responsePreview: rawResponse.substring(0, 300) },
           '[BatchRunner] Failed to parse JSON'
         );
       }
 
       items.push({
-        topicName: refinedPrompt.topicName,
-        questionCount: refinedPrompt.questionCount,
+        topic: refinedPrompt.topic,
         questions,
         rawResponse,
       });

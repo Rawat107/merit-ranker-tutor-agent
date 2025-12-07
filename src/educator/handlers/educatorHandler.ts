@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import pino from 'pino';
 import { EducatorAgent } from '../educatorAgent.js';
-import { Classification } from '../../types/index.js';
+import { Classification, AssessmentCategory, AssessmentRequest } from '../../types/index.js';
 import { Classifier } from '../../classifier/Classifier.js';
 import { LinguaCompressor } from '../../compression/lingua_compressor.js';
 
@@ -12,21 +12,28 @@ const logger = pino({ level: 'info' });
  * Real-time progress updates for educator content generation
  */
 export async function educatorStreamHandler(
-  request: FastifyRequest<{ Body: { query: string; userId?: string } }>,
+  request: FastifyRequest<{ Body: AssessmentRequest }>,
   reply: FastifyReply
 ) {
-  const { query, userId = 'anonymous' } = request.body;
+  const { examTags, subject, totalQuestions, topics, userId = 'anonymous' } = request.body;
 
-  if (!query?.trim()) {
-    return reply.status(400).send({ error: 'Query is required' });
+  if (!subject?.trim()) {
+    return reply.status(400).send({ error: 'Subject is required' });
   }
 
-  // Set SSE headers
+  if (!totalQuestions || totalQuestions < 1 || totalQuestions > 150) {
+    return reply.status(400).send({ error: 'Total questions must be between 1 and 150' });
+  }
+
+  // Set SSE headers with CORS support
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': request.headers.origin || '*',
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   });
 
   const sendEvent = (data: any) => {
@@ -36,35 +43,61 @@ export async function educatorStreamHandler(
   try {
     sendEvent({ type: 'start', message: 'Starting generation...' });
 
-    // Create classifier and compress query for better classification
-    const compressor = LinguaCompressor.getInstance(logger);
-    const classifier = new Classifier(logger, compressor);
+    // Build a query string for classification if topics are not provided
+    let classification: Classification;
     
-    // Classify the query to extract subject, level, intent
-    const classification = await classifier.classify(query);
-    
-    logger.info(
-      { subject: classification.subject, level: classification.level },
-      'Query classified'
-    );
-    sendEvent({ 
-      type: 'progress', 
-      step: 'blueprint', 
-      message: `Classified as ${classification.subject} (${classification.level} level)` 
-    });
+    if (!topics || topics.length === 0) {
+      // User didn't specify topics - use classifier to generate them
+      const query = `Generate ${totalQuestions} questions on ${subject} for ${examTags.join(', ')}`;
+      
+      const compressor = LinguaCompressor.getInstance(logger);
+      const classifier = new Classifier(logger, compressor);
+      classification = await classifier.classify(query);
+      
+      logger.info({ subject: classification.subject, level: classification.level }, 'Query classified');
+      sendEvent({ 
+        type: 'progress', 
+        step: 'blueprint', 
+        message: `Classified as ${classification.subject} (${classification.level} level)` 
+      });
+    } else {
+      // User provided topics - create classification from request
+      classification = {
+        subject: subject,
+        level: 'intermediate', // Default level when topics are provided
+        confidence: 1.0,
+      };
+      
+      logger.info({ subject, topicsProvided: topics.length }, 'Using provided topics');
+      sendEvent({ 
+        type: 'progress', 
+        step: 'blueprint', 
+        message: `Using ${topics.length} provided topics` 
+      });
+    }
 
     // Create educator agent
     const agent = new EducatorAgent(logger);
 
     const startTime = Date.now();
 
-    // Send progress updates for each step
     sendEvent({ type: 'progress', step: 'blueprint', message: 'Creating blueprint...' });
     
-    // Execute the agent
-    const result = await agent.execute(query, classification);
+    // Execute the agent with the new request format
+    const result = await agent.executeFromRequest(request.body, classification);
 
     const duration = Date.now() - startTime;
+
+    // Transform questions to frontend format
+    const transformedQuestions = (result.generatedQuestions || []).map((q: any) => ({
+      question: q.q,
+      options: q.options || [],
+      correctAnswer: q.options?.[q.answer - 1] || q.options?.[0], // Convert 1-based index to actual answer
+      explanation: q.explanation,
+      difficulty: 'intermediate', // Default since we don't have this in new format
+      topic: 'General', // We don't track topic per question anymore
+      format: 'standard',
+    }));
 
     // Send completion event
     sendEvent({
@@ -72,11 +105,11 @@ export async function educatorStreamHandler(
       success: true,
       message: 'Generation complete!',
       content: {
-        questions: result.generatedQuestions || [],
+        questions: transformedQuestions,
       },
       metadata: {
         duration,
-        questionCount: result.generatedQuestions?.length || 0,
+        questionCount: transformedQuestions.length,
         successRate: 100,
       },
     });
@@ -97,10 +130,10 @@ export async function educatorStreamHandler(
  * For backward compatibility and simple API calls
  */
 export async function educatorLangGraphHandler(
-  request: FastifyRequest<{ Body: { query: string; userId?: string } }>,
+  request: FastifyRequest<{ Body: { query: string; userId?: string; assessmentCategory?: AssessmentCategory } }>,
   reply: FastifyReply
 ) {
-  const { query, userId = 'anonymous' } = request.body;
+  const { query, userId = 'anonymous', assessmentCategory = 'quiz' } = request.body;
 
   if (!query?.trim()) {
     return reply.status(400).send({ error: 'Query is required' });
@@ -117,15 +150,26 @@ export async function educatorLangGraphHandler(
     // Create educator agent
     const agent = new EducatorAgent(logger);
 
-    const result = await agent.execute(query, classification);
+    const result = await agent.execute(query, classification, assessmentCategory);
+
+    // Transform questions to frontend format
+    const transformedQuestions = (result.generatedQuestions || []).map((q: any) => ({
+      question: q.q,
+      options: q.options || [],
+      correctAnswer: q.options?.[q.answer - 1] || q.options?.[0],
+      explanation: q.explanation,
+      difficulty: 'intermediate',
+      topic: 'General',
+      format: 'standard',
+    }));
 
     return reply.send({
       success: true,
       data: {
-        questions: result.generatedQuestions || [],
+        questions: transformedQuestions,
         blueprint: result.blueprint,
         metadata: {
-          questionCount: result.generatedQuestions?.length || 0,
+          questionCount: transformedQuestions.length,
         },
       },
     });
