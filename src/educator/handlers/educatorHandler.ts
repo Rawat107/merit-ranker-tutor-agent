@@ -99,6 +99,16 @@ export async function educatorStreamHandler(
       format: 'standard',
     }));
 
+    logger.info(
+      {
+        generatedQuestionsCount: result.generatedQuestions?.length || 0,
+        transformedQuestionsCount: transformedQuestions.length,
+        cachedTotal: result.cachedTotal,
+        toGenerateTotal: result.toGenerateTotal,
+      },
+      '[Handler] Sending completion event with all questions'
+    );
+
     // Send completion event
     sendEvent({
       type: 'complete',
@@ -110,6 +120,8 @@ export async function educatorStreamHandler(
       metadata: {
         duration,
         questionCount: transformedQuestions.length,
+        cachedTotal: result.cachedTotal || 0,
+        generatedTotal: result.toGenerateTotal || 0,
         successRate: 100,
       },
     });

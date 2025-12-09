@@ -108,7 +108,7 @@ export class QuestionBatchRunner {
       registryEntry,
       this.logger,
       modelConfig.temperature,
-      3072 // Higher token limit for question generation
+      4096 // Increased token limit for complete question generation (was 3072)
     );
 
     // Wrap our LLM in a RunnableLambda to make it batch-compatible

@@ -3,17 +3,236 @@ import type { ValidatorConfig, ValidationResult } from "../../types/index.js";
 
 /**
  * Topic Validator and Normalizer
+ * Combines validation logic with topic normalization and aliasing for cache matching
  */
 
 // Re-export types for convenience
 export type { ValidatorConfig, ValidationResult };
 
+// ============================================================================
+// TOPIC NORMALIZATION AND ALIASING
+// ============================================================================
+
+export interface NormalizedTopic {
+  original: string;
+  normalized: string;
+  stripped: string; // Without difficulty modifiers
+  aliases: string[];
+}
+
+// Difficulty/level adjectives to strip for matching
+const DIFFICULTY_MODIFIERS = [
+  'advanced',
+  'basic',
+  'beginner',
+  'intermediate',
+  'intro',
+  'introductory',
+  'easy',
+  'hard',
+  'difficult',
+  'simple',
+];
+
+// Topic alias/synonym dictionary
+const TOPIC_ALIASES: Record<string, string[]> = {
+  'system design': [
+    'system design',
+    'systems design',
+    'scalability design',
+    'software architecture',
+    'distributed systems',
+    'system architecture',
+  ],
+  'c++': [
+    'c++',
+    'cpp',
+    'c++ programming',
+    'cplusplus',
+  ],
+  'python': [
+    'python',
+    'python programming',
+    'python3',
+    'py',
+  ],
+  'database': [
+    'database',
+    'databases',
+    'dbms',
+    'database management',
+    'rdbms',
+  ],
+  'data structure': [
+    'data structure',
+    'data structures',
+    'ds',
+    'dsa',
+  ],
+  'algorithm': [
+    'algorithm',
+    'algorithms',
+    'algo',
+    'algorithmic',
+  ],
+  'operating system': [
+    'operating system',
+    'operating systems',
+    'os',
+  ],
+  'computer network': [
+    'computer network',
+    'computer networks',
+    'networking',
+    'network',
+  ],
+  'profit and loss': [
+    'profit and loss',
+    'profit & loss',
+    'profit loss',
+    'p&l',
+  ],
+  'time and work': [
+    'time and work',
+    'time & work',
+    'time work',
+  ],
+};
+
+// Generic lead-in phrases to drop so "concept of C++" and "core of C++" normalize identically
+function stripLeadingQualifiers(input: string): string {
+  let output = input.trim();
+
+  // Strip patterns like "concept of X", "core of X", "basics of X", "introduction to X"
+  output = output.replace(
+    /^(concepts?|core|basics?|fundamentals?|principles?|essentials?|introduction|intro|overview)\s+(of|to)\s+/,
+    ''
+  );
+
+  // Also strip if the qualifier appears without "of/to" (e.g., "core C++")
+  output = output.replace(
+    /^(concepts?|core|basics?|fundamentals?|principles?|essentials?|introduction|intro|overview)\s+/, 
+    ''
+  );
+
+  return output.trim();
+}
+
+// ============================================================================
+// TOPIC VALIDATOR CLASS
+// ============================================================================
+
 export class TopicValidator {
   constructor(private logger: pino.Logger) {}
 
+  // --------------------------------------------------------------------------
+  // Topic Normalization Methods
+  // --------------------------------------------------------------------------
+
+  /**
+   * Normalize a topic string for cache matching
+   */
+  normalize(topic: string): NormalizedTopic {
+    let normalized = topic
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+
+    normalized = normalized.replace(/[^\w\s+&-]/g, '');
+
+    const words = normalized.split(' ');
+    const strippedWords = words.filter(
+      word => !DIFFICULTY_MODIFIERS.includes(word)
+    );
+    const strippedWithQualifiers = strippedWords.join(' ').trim();
+
+    // Drop generic lead-ins like "concept of", "core of", "basics of", "introduction to"
+    const stripped = stripLeadingQualifiers(strippedWithQualifiers);
+
+    const aliases = this.getAliases(stripped);
+
+    return {
+      original: topic,
+      normalized,
+      stripped,
+      aliases,
+    };
+  }
+
+  /**
+   * Get all aliases for a normalized topic
+   */
+  private getAliases(normalizedTopic: string): string[] {
+    if (TOPIC_ALIASES[normalizedTopic]) {
+      return TOPIC_ALIASES[normalizedTopic];
+    }
+
+    for (const [canonical, aliases] of Object.entries(TOPIC_ALIASES)) {
+      if (aliases.includes(normalizedTopic)) {
+        return aliases;
+      }
+    }
+
+    return [normalizedTopic];
+  }
+
+  /**
+   * Check if two topics match (including aliases)
+   */
+  topicsMatch(topic1: string, topic2: string): boolean {
+    const norm1 = this.normalize(topic1);
+    const norm2 = this.normalize(topic2);
+
+    if (norm1.stripped === norm2.stripped) {
+      return true;
+    }
+
+    const aliases1Set = new Set(norm1.aliases);
+    return norm2.aliases.some(alias => aliases1Set.has(alias));
+  }
+
+  /**
+   * Normalize a subject string
+   */
+  normalizeSubject(subject: string): string {
+    return subject
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^\w\s]/g, '');
+  }
+
+  /**
+   * Build topic query strings for semantic search
+   */
+  buildTopicQueries(
+    topicNorm: string,
+    subject: string,
+    examTags: string[]
+  ): string[] {
+    const subjectNorm = this.normalizeSubject(subject);
+    const examTagsStr = examTags.join(', ');
+
+    return [
+      `${topicNorm} question types for ${examTagsStr} ${subjectNorm}`,
+      `${topicNorm} sample questions`,
+      `${topicNorm} ${subjectNorm}`,
+    ];
+  }
+
+  /**
+   * Generate cache key for topic-based storage
+   */
+  generateTopicCacheKey(subjectNorm: string, topicNorm: string): string {
+    return `cache:subject:${subjectNorm}:topic:${topicNorm}`;
+  }
+
+  // --------------------------------------------------------------------------
+  // Topic Validation Methods
+  // --------------------------------------------------------------------------
+
   /**
    * Main validation entry point
-   *
    */
   async validateAndNormalizeTopics(
     topics: any[] | undefined,

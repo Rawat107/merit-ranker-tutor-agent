@@ -14,10 +14,60 @@ import type { EnrichedTopic, RefinedPrompt } from '../../types/index.js';
  */
 
 export class PromptRefiner {
+  private readonly MAX_QUESTIONS_PER_PROMPT = 5; // Max questions per LLM call for accuracy
+
   constructor(private logger: pino.Logger) {}
 
   /**
+   * Split topics with >5 questions into multiple sub-topics
+   * This prevents incomplete LLM outputs due to token limits
+   * 
+   * Example: Topic with 10 questions → 2 topics with 5 questions each
+   */
+  private splitTopicsForAccuracy(topics: EnrichedTopic[]): EnrichedTopic[] {
+    const result: EnrichedTopic[] = [];
+
+    for (const topic of topics) {
+      if (topic.noOfQuestions <= this.MAX_QUESTIONS_PER_PROMPT) {
+        // No split needed
+        result.push(topic);
+      } else {
+        // Split into multiple sub-topics
+        const numSplits = Math.ceil(topic.noOfQuestions / this.MAX_QUESTIONS_PER_PROMPT);
+        const questionsPerSplit = Math.ceil(topic.noOfQuestions / numSplits);
+        
+        this.logger.info(
+          {
+            topic: topic.topicName,
+            originalQuestions: topic.noOfQuestions,
+            splits: numSplits,
+            questionsPerSplit,
+          },
+          '[PromptRefiner] Splitting topic for accuracy'
+        );
+
+        for (let i = 0; i < numSplits; i++) {
+          const remainingQuestions = topic.noOfQuestions - (i * questionsPerSplit);
+          const questionsForThisSplit = Math.min(questionsPerSplit, remainingQuestions);
+
+          result.push({
+            ...topic,
+            noOfQuestions: questionsForThisSplit,
+            // Keep same topic name - batchRunner will merge them back
+            topicName: topic.topicName,
+          });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Main entry point: Process all enriched topics in batch
+   * 
+   * IMPORTANT: Splits topics with >5 questions into multiple sub-topics
+   * to prevent incomplete LLM outputs due to token limits
    */
   async refinePrompts(
     enrichedTopics: EnrichedTopic[],
@@ -28,15 +78,19 @@ export class PromptRefiner {
   ): Promise<RefinedPrompt[]> {
     const startTime = Date.now();
 
+    // Split topics with >5 questions to prevent incomplete outputs
+    const splitTopics = this.splitTopicsForAccuracy(enrichedTopics);
+
     this.logger.info(
       {
-        topicsCount: enrichedTopics.length,
-        topicNames: enrichedTopics.map(t => t.topicName),
+        originalTopicsCount: enrichedTopics.length,
+        splitTopicsCount: splitTopics.length,
+        topicNames: splitTopics.map((t: EnrichedTopic) => `${t.topicName} (${t.noOfQuestions}q)`),
         examTags,
         subject,
         maxConcurrency,
       },
-      '[PromptRefiner] Starting batch prompt refinement using .batch()'
+      '[PromptRefiner] Starting batch prompt refinement (topics split for accuracy)'
     );
 
     try {
@@ -45,9 +99,9 @@ export class PromptRefiner {
         return await this.refineSingleTopic(topic, examTags, subject, classification);
       });
 
-      // Process all topics with maxConcurrency control
+      // Process all topics (including split ones) with maxConcurrency control
       const refinedPrompts = await runnableRefiner.batch(
-        enrichedTopics,
+        splitTopics,
         { maxConcurrency }
       );
 
@@ -59,12 +113,12 @@ export class PromptRefiner {
           topicNamesProcessed: refinedPrompts.map(p => p.topic),
           duration,
         },
-        '[PromptRefiner] ✅ Batch refinement complete'
+        '[PromptRefiner]  Batch refinement complete'
       );
 
       return refinedPrompts;
     } catch (error) {
-      this.logger.error({ error }, '[PromptRefiner] ❌ Batch refinement failed');
+      this.logger.error({ error }, '[PromptRefiner] Batch refinement failed');
       throw error;
     }
   }

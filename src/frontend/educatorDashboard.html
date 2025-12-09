@@ -794,7 +794,10 @@
           updateStep(s, "Complete", "complete")
         );
 
-        displayResults(data, duration);
+        // Add small delay to ensure all data is processed before display
+        setTimeout(() => {
+          displayResults(data, duration);
+        }, 500);
       }
 
       function displayResults(data, duration) {

@@ -31,11 +31,6 @@ export type Blueprint = z.infer<typeof BlueprintSchema>;
  * - If topics are provided: validate and normalize to totalQuestions, bypass blueprint
  * - Only adjust question counts, never invent new topics (unless input was empty)
  *
- * Uses existing infrastructure:
- * - modelConfigService for model selection
- * - createTierLLM for LLM initialization to generate blueprint
- * - buildBlueprintGenerationPrompt from promptTemplates
- * - TopicValidator for topic validation and normalization
  */
 export class BlueprintGenerator {
   private topicValidator: ReturnType<typeof createTopicValidator>;
@@ -47,7 +42,7 @@ export class BlueprintGenerator {
   ) {
     this.topicValidator = createTopicValidator(logger);
     this.validatorConfig = {
-      maxQuestionsPerNewTopic: 10,
+      maxQuestionsPerNewTopic: 5, // ← Changed from 10 to 5 for accuracy
       distributionStrategy: "round-robin",
       allowBlueprintWhenTopicsProvided: false,
       ...validatorConfig,
